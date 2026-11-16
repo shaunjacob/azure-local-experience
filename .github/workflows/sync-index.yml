@@ -1,0 +1,56 @@
+name: Sync index.html
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-index
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check destination credential
+        env:
+          DESTINATION_REPO_TOKEN: ${{ secrets.DESTINATION_REPO_TOKEN }}
+        run: |
+          if [[ -z "$DESTINATION_REPO_TOKEN" ]]; then
+            echo "::error::Add the DESTINATION_REPO_TOKEN repository secret with Contents read/write access to Azure/azure-local-experience."
+            exit 1
+          fi
+
+      - name: Check out source main
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          path: source
+          persist-credentials: false
+
+      - name: Check out destination main
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Azure/azure-local-experience
+          ref: main
+          token: ${{ secrets.DESTINATION_REPO_TOKEN }}
+          path: destination
+
+      - name: Sync only index.html
+        working-directory: destination
+        run: |
+          cp -- ../source/index.html index.html
+          git add -- index.html
+          if git diff --cached --quiet -- index.html; then
+            echo "index.html is already up to date."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Sync index.html from shaunjacob/azure-local-experience" -- index.html
+          git push origin HEAD:main
