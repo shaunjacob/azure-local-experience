@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Azure Local Visualizer — Interactive Architecture Experience</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body class="light-mode">
+  <div class="ambient-dots" aria-hidden="true"></div>
+
+  <!-- Clean, Single-Row Top Bar -->
+  <header class="top-header">
+    <div class="brand">
+      <img src="icons/azure-local.svg" alt="Azure Local" />
+      <div>
+        <span class="brand-name">Sovereign Private Cloud</span>
+        <span class="brand-tag">Powered by Azure Local</span>
+      </div>
+    </div>
+
+    <!-- Master Connected vs. Disconnected Switch -->
+    <div class="mode-toggle" role="group" aria-label="Connection Mode">
+      <button id="btnConnected" class="toggle-btn active conn" type="button">
+        ☁️ Connected Mode
+      </button>
+      <button id="btnDisconnected" class="toggle-btn disc" type="button">
+        🛡️ Disconnected Mode
+      </button>
+    </div>
+
+    <!-- Top-Right Scenarios Dropdown + Light/Dark Theme Switch -->
+    <div class="quick-actions">
+      <div id="headerScenariosPicker" class="opt5-header-picker"></div>
+      <button id="btnThemeToggle" class="theme-btn icon-only" type="button" title="Switch between Light and Dark theme" aria-label="Switch between Light and Dark theme">
+        🌙
+      </button>
+    </div>
+  </header>
+
+  <!-- Simple, Plain-English 1-Sentence Explanation -->
+  <section class="story-caption">
+    <h1 id="headlineText">Apps and data run in your datacenter — managed from Azure</h1>
+    <p id="subheadText">Select any interactive scenario from <strong>Scenarios</strong> in the top-right header, or click any component in the diagram.</p>
+
+    <!-- Hidden compatibility hooks for existing scenario renderers -->
+    <div id="studioConsole" class="c1-scenarios-console" hidden>
+      <div id="scenarioQuickStrip" class="c1-top-bar"></div>
+      <div id="scenarioControlBar" class="c1-bento-drawer" hidden></div>
+    </div>
+  </section>
+
+  <!-- ================= 100% CENTERED ILLUSTRATED VISUAL SCENE ================= -->
+  <main id="visualStage" class="visual-stage">
+    <!-- 60fps Animated Data & Control Particle Layer -->
+    <canvas id="flowCanvas"></canvas>
+
+    <!-- 1. AZURE PUBLIC CLOUD IN THE SKY (Unified Control Plane Container) -->
+    <section class="sky-tier" aria-label="Microsoft Azure Cloud">
+      <div id="cloudBox" class="azure-cloud-illustration">
+        <div class="cloud-cp-top-header">
+          <div class="cloud-cp-badge">☁️ Microsoft Azure Public Cloud</div>
+          <div id="cloudDock" class="cloud-cp-header-dock">
+            <div id="controlPlaneCapsule" class="unified-cp-title-pill" data-tip="Azure Control Plane|The unified management &amp; governance plane (Portal, ARM, Identity, Monitor, Security, Policy &amp; Updates). Runs in Azure Public Cloud when Connected, or transitions down onto your 3-Node Management Cluster when Disconnected!|icons/portal.svg">
+              <img src="icons/portal.svg" alt="" />
+              <div class="unified-cp-title-text">
+                <strong>Azure Control Plane</strong>
+                <small id="cpLocationLabel">Unified Cloud Management &amp; Governance</small>
+              </div>
+            </div>
+          </div>
+          <div id="cloudArcGateway" class="cloud-arc-status-pill" data-tip="Azure Arc Management Plane|Projects Azure Resource Manager (ARM) and governance policies down to your on-premises Azure Local clusters.|icons/azure-arc.svg">
+            <img src="icons/azure-arc.svg" alt="" />
+            <span>Arc Control Plane Active</span>
+          </div>
+        </div>
+
+        <!-- Unified 7-Pillar Control Plane Services Row (All inside one cohesive Control Plane!) -->
+        <div class="unified-cp-services-grid">
+          <div class="icon-orb cp-service-orb" data-tip="Azure Portal|Single browser experience to provision VMs, AKS clusters, storage, and monitor all sites.|icons/portal.svg">
+            <img src="icons/portal.svg" alt="Azure Portal" />
+            <span>Azure Portal</span>
+            <small>Web Console</small>
+          </div>
+          <div class="icon-orb cp-service-orb" data-tip="Azure Resource Manager (ARM)|The core deployment engine, templates, Bicep/Terraform APIs, and RBAC access control.|icons/azure-arc.svg">
+            <img src="icons/azure-arc.svg" alt="Resource Manager" />
+            <span>ARM &amp; APIs</span>
+            <small>Resource Engine</small>
+          </div>
+          <div class="icon-orb cp-service-orb" data-tip="Microsoft Entra ID|Signs in your team and controls role-based access (RBAC) to servers and VMs.|icons/entra.svg">
+            <img src="icons/entra.svg" alt="Entra ID" />
+            <span>Entra ID</span>
+            <small>Identity &amp; RBAC</small>
+          </div>
+          <div class="icon-orb cp-service-orb" data-tip="Azure Monitor|Watches server health, CPU/NVMe performance, and alerts your team from anywhere.|icons/monitor.svg">
+            <img src="icons/monitor.svg" alt="Azure Monitor" />
+            <span>Monitor</span>
+            <small>Health &amp; Logs</small>
+          </div>
+          <div class="icon-orb cp-service-orb" data-tip="Defender for Cloud|Protects your local servers and VMs against cyber threats and vulnerabilities.|icons/defender.svg">
+            <img src="icons/defender.svg" alt="Defender" />
+            <span>Defender</span>
+            <small>Cloud Security</small>
+          </div>
+          <div id="cpPolicyOrb" class="icon-orb cp-service-orb" data-tip="Azure Policy|Automatically enforces your company's security and compliance standards.|icons/policy.svg">
+            <img src="icons/policy.svg" alt="Azure Policy" />
+            <span>Policy</span>
+            <small>Compliance</small>
+          </div>
+          <div id="cpUpdatesOrb" class="icon-orb cp-service-orb" data-tip="Azure Update Manager|Orchestrates full-stack OS, driver, and firmware updates across nodes with zero downtime.|icons/updates.svg">
+            <img src="icons/updates.svg" alt="Updates" />
+            <span>Updates</span>
+            <small>Lifecycle Mgmt</small>
+          </div>
+        </div>
+      </div>
+
+      <!-- AZURE POLICY PUBLIC CLOUD RESOURCES BAY (Sibling below #cloudBox so #cloudBox Control Plane never changes size!) -->
+      <div id="policyCloudBay" class="policy-cloud-bay" aria-label="Azure Public Cloud Resources under Policy">
+        <div class="policy-bay-header">
+          <div class="policy-bay-title">
+            <img src="icons/policy.svg" alt="" />
+            <div>
+              <strong>Azure Public Cloud VMs · Governed by the Same Guest OS Baseline</strong>
+              <small id="policyStatusSub">Machine Configuration: <strong>Enforce OS Security Baseline (TLS 1.2 &amp; Host Firewall)</strong></small>
+            </div>
+          </div>
+          <div id="policyComplianceBadge" class="policy-compliance-score">
+            Ready to Audit
+          </div>
+        </div>
+
+        <div id="policyCloudResourcesRow" class="policy-cloud-resources-row">
+          <div class="vm-pill cloud-res-pill" data-policy-target="cloud-vm-1" data-vm-name="Cloud-Web-VM-01">
+            <span class="run-dot"></span>
+            <img src="icons/vm.svg" alt="" />
+            <span class="pill-name">Cloud-Web-VM-01</span>
+          </div>
+          <div class="vm-pill cloud-res-pill sql" data-policy-target="cloud-sql-1" data-vm-name="Cloud-SQL-VM-01">
+            <span class="run-dot"></span>
+            <img src="icons/sql-mi.svg" alt="" />
+            <span class="pill-name">Cloud-SQL-VM-01</span>
+          </div>
+          <div class="vm-pill cloud-res-pill aks" data-policy-target="cloud-aks-1" data-vm-name="Cloud-AKS-Prod">
+            <span class="run-dot"></span>
+            <img src="icons/aks.svg" alt="" />
+            <span class="pill-name">Cloud-AKS-Prod</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- AZURE PUBLIC CLOUD WORKLOADS / ASR VAULT (Separate sibling card so #cloudBox Control Plane never changes size!) -->
+      <div id="asrCloudBay" class="asr-cloud-bay" aria-label="Azure Site Recovery Vault">
+        <div class="asr-bay-header">
+          <div class="asr-vault-title" data-tip="Azure Site Recovery|Continuously replicates local Windows &amp; Linux VMs to an Azure Recovery Services Vault (30s RPO) so they can boot in Azure if Site 1 goes offline.|icons/asr.svg">
+            <img src="icons/asr.svg" alt="Recovery Services Vault" />
+            <div>
+              <strong>Azure Site Recovery · Recovery Services Vault</strong>
+              <small id="asrStatusSub">Continuous VM replication active (30s RPO) · Standing by in Azure</small>
+            </div>
+          </div>
+        </div>
+        <div id="asrCloudVmSlot" class="asr-cloud-vm-slot">
+          <span id="asrStandbyHint" class="asr-standby-hint">
+            ☁️ Replicated VM disks synced in Azure Storage — click <strong>▶ 2. Failover to Cloud</strong> above to boot them as Azure VMs
+          </span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. CLEAN SKYWAY GAP + INLINE SCENARIO STEP BAR (OPTION 5) -->
+    <div class="skyway-gap">
+      <!-- Shown when a scenario is active: Inline Step Strip right in the Skyway Gap -->
+      <div id="skywayScenarioStepBar" class="opt5-skyway-bar" hidden></div>
+
+      <!-- Shown only when Internet Outage simulation is active -->
+      <div class="wan-outage-banner">
+        ✂️ Internet Link Cut — Local VMs &amp; Services Keep Running Uninterrupted (Up to 30 Days)
+      </div>
+
+      <!-- Shown only in Disconnected Mode -->
+      <div class="airgap-shield-banner">
+        🔒 100% Air-Gapped · Control Plane &amp; Management Nodes Running Inside Your Datacenter Below
+      </div>
+
+      <svg class="airgap-dome-svg" viewBox="0 0 1100 80" preserveAspectRatio="none">
+        <defs>
+          <linearGradient id="shieldGrad" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.15" />
+            <stop offset="50%" stop-color="#fbbf24" stop-opacity="0.95" />
+            <stop offset="100%" stop-color="#10b981" stop-opacity="0.15" />
+          </linearGradient>
+        </defs>
+        <path d="M 15 76 Q 550 -22 1085 76" fill="none" stroke="url(#shieldGrad)" stroke-width="3.5" class="dome-dash" />
+      </svg>
+    </div>
+
+    <!-- 3. UNIFIED ON-PREMISES ENVIRONMENT FRAME (Local Azure Services + Management Wing in Disconnected Mode + Tenant Workload Cluster(s)) -->
+    <div id="sitesOuterFrame" class="sites-outer-frame">
+      <!-- Top Premises Header + Azure Arc Gateway -->
+      <div class="premises-frame-header">
+        <div class="premises-header-left">
+          <div class="premises-location-pill">
+            <span class="premises-dot"></span>
+            <span>ON-PREMISES · YOUR DATACENTER OR EDGE SITE</span>
+          </div>
+          <span class="premises-frame-sub">Azure Services running locally on your physical cluster hardware</span>
+        </div>
+
+        <div id="arcBridgeBadge" class="arc-gateway-badge" data-tip="Azure Arc Bridge|Built-in bridge running on your cluster that connects local hardware and services to the Azure Control Plane (in Azure or on your local Management Cluster).|icons/azure-arc.svg">
+          <img src="icons/azure-arc.svg" alt="Azure Arc" />
+          <strong id="arcBridgeText">Azure Arc</strong>
+        </div>
+      </div>
+
+      <!-- 3A. AZURE WORKLOADS & SERVICES ENABLED LOCALLY (Top Layer of On-Premises, Sitting Directly Above the Cluster Hardware) -->
+      <section id="servicesRibbon" class="services-ribbon" aria-label="Workloads and Services Enabled Locally">
+        <div class="ribbon-header-row">
+          <div class="ribbon-label">Workloads &amp; Azure Services Running Locally</div>
+          <span class="ribbon-sub" id="servicesRibbonSub">Supported in Connected Mode — switch to Disconnected Mode to compare</span>
+        </div>
+        <div class="services-showcase-row">
+          <div class="service-tile" data-tip="Azure Local VMs &amp; Arc-Enabled Servers|Deploy Windows and Linux VMs on Azure Local and manage VM guests via Arc-enabled servers. Fully supported in both Connected and Disconnected Operations!|icons/vm.svg">
+            <img src="icons/vm.svg" alt="Azure Local VMs" />
+            <div class="service-tile-text">
+              <strong>Azure Local VMs</strong>
+              <small>Windows, Linux &amp; Arc Guests</small>
+            </div>
+          </div>
+
+          <div class="service-tile" data-tip="AKS on Azure Local &amp; Arc-Enabled Kubernetes|Deploy AKS on Azure Local and connect CNCF Arc-enabled Kubernetes clusters. Fully supported in both Connected and Disconnected Operations!|icons/aks.svg">
+            <img src="icons/aks.svg" alt="AKS &amp; Arc Kubernetes" />
+            <div class="service-tile-text">
+              <strong>AKS &amp; Arc K8s</strong>
+              <small>Kubernetes Containers</small>
+            </div>
+          </div>
+
+          <div class="service-tile" data-tip="Azure Container Registry (ACR)|Store and pull private container images and artifacts locally for your AKS and container workloads. Supported in Disconnected Operations and Connected Mode!|icons/acr.svg">
+            <img src="icons/acr.svg" alt="Azure Container Registry" />
+            <div class="service-tile-text">
+              <strong>Container Registry</strong>
+              <small>Local ACR Images</small>
+            </div>
+          </div>
+
+          <div class="service-tile" data-tip="SQL Server on Azure Local (Arc-Enabled in Connected Mode)|Runs SQL Server inside Windows or Linux VMs on Azure Local. In Connected Mode, it integrates with SQL Server enabled by Azure Arc (centralized inventory, Defender for SQL, Best Practices Assessment, PAYG billing). In Disconnected Mode, SQL Server runs inside local VMs managed locally.|icons/sql-mi.svg">
+            <img src="icons/sql-mi.svg" alt="SQL Server on Azure Local" />
+            <div class="service-tile-text">
+              <strong>SQL Server</strong>
+              <small id="sqlServiceSub">Arc-Enabled SQL on VMs</small>
+            </div>
+          </div>
+
+          <div class="service-tile" data-tip="Local AI — Foundry Local, Edge RAG &amp; Azure AI Containers|Connected Mode supports Foundry Local, Edge RAG &amp; Azure ML. Disconnected Mode supports local AI containers (Document Intelligence, Vision, Language, Translator) on GPUs.|icons/ai.svg">
+            <img src="icons/ai.svg" alt="Local AI Services" />
+            <div class="service-tile-text">
+              <strong>Local AI Services</strong>
+              <small id="aiServiceSub">Foundry Local &amp; Edge RAG</small>
+            </div>
+          </div>
+
+          <div class="service-tile" data-cloud-only="true" data-tip="Azure Virtual Desktop (AVD)|Host Windows 11 multi-session desktops and apps locally on Azure Local with cloud brokering via Azure Virtual Desktop (Connected Mode).|icons/avd.svg">
+            <img src="icons/avd.svg" alt="Azure Virtual Desktop" />
+            <div class="service-tile-text">
+              <strong>Virtual Desktop</strong>
+              <small>Local AVD Session Hosts</small>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Shown only in Rack-Aware Cluster mode to visually unite Site 1 + Site 2 as ONE cluster -->
+      <div id="rackAwareHeader" class="rack-aware-header" hidden>
+        <div class="ra-badge">🔗 Stretched Rack-Aware Cluster</div>
+        <div class="ra-header-controls">
+          <button id="btnAddVmRack" class="cluster-deploy-btn" type="button" title="Deploy a new VM to this stretched cluster">
+            <img src="icons/vm.svg" alt="" />
+            <span>+ Deploy VM</span>
+          </button>
+          <div class="storage-mode-toggle" data-storage-site="1" role="group" aria-label="Stretched Cluster Storage Architecture">
+            <span class="storage-toggle-lbl">Storage:</span>
+            <button type="button" class="stg-btn active" data-stg-mode="s2d">S2D Only (&lt;1ms)</button>
+            <button type="button" class="stg-btn" data-stg-mode="san">SAN Only (&lt;5ms)</button>
+          </div>
+        </div>
+        <span id="rackAwareMetaText" class="ra-meta">2 Local Availability Zones · Zero Data Loss</span>
+      </div>
+
+      <!-- Main Datacenter Floor Wrapper: Expands a Left Management Wing in Disconnected Mode alongside Your Datacenter Cluster(s) -->
+      <div id="datacenterMainRow" class="datacenter-main-row">
+        <!-- ==================== DISCONNECTED MODE LEFT WING: 3-NODE MANAGEMENT CLUSTER + LOCAL CONTROL PLANE + AD/PKI ==================== -->
+        <aside id="mgmtClusterWrapper" class="mgmt-cluster-wrapper" aria-label="On-Premises Dedicated Management Cluster and Identity">
+          <section id="mgmtClusterBox" class="datacenter-building mgmt-cluster-building">
+            <div class="dc-roof-header mgmt-wing-header">
+              <div class="building-title">
+                <div class="building-icon mgmt-bldg-icon">
+                  <img src="icons/azure-local.svg" alt="Management Cluster" />
+                </div>
+                <div>
+                  <h2>Management Cluster · 3 Nodes</h2>
+                  <span>Added in your datacenter for Disconnected Mode</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 1. Local Azure Control Plane Container -->
+            <div class="mgmt-control-bar">
+              <div id="localMgmtDock" class="mgmt-cp-header-dock"></div>
+
+              <div class="mgmt-services-grid" aria-label="Supported Disconnected Operations Services">
+                <div class="icon-orb cp-service-orb" data-tip="Local Azure Portal|Delivers an Azure Portal experience hosted on-premises that's similar to Azure Public.|icons/portal.svg">
+                  <img src="icons/portal.svg" alt="Local Portal" />
+                  <span>Portal</span>
+                </div>
+                <div class="icon-orb cp-service-orb" data-tip="Azure Resource Manager (ARM)|Manage and use local subscriptions, resource groups, ARM templates, and Azure CLI offline.|icons/azure-arc.svg">
+                  <img src="icons/azure-arc.svg" alt="ARM and CLI" />
+                  <span>ARM &amp; CLI</span>
+                </div>
+                <div id="mgmtPolicyOrb" class="icon-orb cp-service-orb" data-tip="Azure Policy|Enforce standards and governance through policies when creating new resources locally.|icons/policy.svg">
+                  <img src="icons/policy.svg" alt="Azure Policy" />
+                  <span>Policy</span>
+                </div>
+                <div class="icon-orb cp-service-orb" data-tip="Azure Key Vault|Create and manage local Key Vaults to store and access secrets, keys, and certificates offline.|icons/key-vault.svg">
+                  <img src="icons/key-vault.svg" alt="Key Vault" />
+                  <span>Key Vault</span>
+                </div>
+                <div class="icon-orb cp-service-orb" data-tip="Monitor &amp; Log Collection|Monitor infrastructure and workloads running in Disconnected Operations with local metrics and on-demand log collection.|icons/monitor.svg">
+                  <img src="icons/monitor.svg" alt="Monitor" />
+                  <span>Monitor</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 2. Simplified 3-Node Management Cluster Enclosure -->
+            <div class="cluster-enclosure mgmt-enclosure">
+              <div class="cluster-enclosure-header mgmt-enclosure-header">
+                <div class="cluster-title-group">
+                  <span class="cluster-dot gold"></span>
+                  <strong>3-Node Management Cluster</strong>
+                </div>
+                <div class="ha-cluster-hint mgmt-hint">
+                  Hosts Control Plane
+                </div>
+              </div>
+
+              <!-- 3 Clean Management Nodes: Node 1, Node 2, Node 3 -->
+              <div id="mgmtNodesRow" class="physical-servers-row cols-3"></div>
+
+              <div class="shared-storage-bar mgmt-storage-bar" data-tip="3-Node Management Cluster|Dedicated 3-node Azure Local cluster that hosts the local Disconnected Operations appliance.|icons/azure-local.svg">
+                <span>⇄ Dedicated Management Cluster Fabric</span>
+              </div>
+            </div>
+
+            <!-- 3. Local Identity & PKI Prerequisite Strip inside Left Datacenter Wing -->
+            <div id="localIdentityBox" class="mgmt-identity-strip" aria-label="Separate Local Identity Infrastructure">
+              <div class="mgmt-identity-header">
+                <div class="mgmt-identity-title">
+                  <img src="icons/key-vault.svg" alt="" />
+                  <span>Local Identity &amp; PKI</span>
+                </div>
+                <span class="mgmt-identity-link-pill">⇄ OIDC &amp; LDAPS</span>
+              </div>
+
+              <div class="mgmt-identity-cards-grid">
+                <div class="identity-service-card" data-tip="Active Directory (AD DS)|External on-premises Active Directory syncs Universal groups and memberships to the Disconnected Operations appliance over LDAPS.|icons/entra.svg">
+                  <img src="icons/entra.svg" alt="Active Directory" />
+                  <div>
+                    <strong>AD DS</strong>
+                    <small>LDAPS</small>
+                  </div>
+                </div>
+
+                <div class="identity-service-card" data-tip="Active Directory Federation Services (AD FS)|External on-premises AD FS server authenticates operators and users into the local Azure Portal &amp; CLI via OpenID Connect (OIDC).|icons/ad-fs.svg">
+                  <img src="icons/ad-fs.svg" alt="AD FS" />
+                  <div>
+                    <strong>AD FS</strong>
+                    <small>OIDC Auth</small>
+                  </div>
+                </div>
+
+                <div class="identity-service-card" data-tip="Internal DNS &amp; PKI Certificates|Existing on-premises DNS resolves local portal/identity endpoints and enterprise PKI secures OIDC, LDAPS, and appliance TLS endpoints.|icons/pki.svg">
+                  <img src="icons/pki.svg" alt="PKI and DNS" />
+                  <div>
+                    <strong>DNS &amp; PKI</strong>
+                    <small>TLS Certs</small>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </aside>
+
+        <div id="sitesSplitWrapper" class="sites-split-wrapper">
+        <!-- ==================== SITE 1 (DEFAULT ON PAGE LOAD) ==================== -->
+        <section id="datacenterBox" class="datacenter-building" aria-label="Primary Local Datacenter">
+          <div class="dc-roof-header">
+            <div class="building-title">
+              <div class="building-icon">🏢</div>
+              <div>
+                <h2 id="primarySiteTitle">Your Datacenter · 4-Node Cluster</h2>
+                <span id="dcStatusSub">All VMs, containers &amp; data stay on your hardware</span>
+              </div>
+            </div>
+
+            <div class="site-header-right">
+              <div class="cluster-header-controls site-inline-controls">
+                <button id="btnAddVm" class="cluster-deploy-btn" type="button" title="Deploy a new VM to this local cluster from the active Azure Control Plane">
+                  <img src="icons/vm.svg" alt="" />
+                  <span>+ Deploy VM</span>
+                </button>
+                <div class="storage-mode-toggle" data-storage-site="1" role="group" aria-label="Site 1 Storage Architecture">
+                  <span class="storage-toggle-lbl">Storage:</span>
+                  <button type="button" class="stg-btn active" data-stg-mode="s2d">S2D</button>
+                  <button type="button" class="stg-btn" data-stg-mode="san">SAN</button>
+                  <button type="button" class="stg-btn" data-stg-mode="both">S2D + SAN</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="dc-floor single-floor">
+            <div id="workloadFloor" class="workload-floor">
+              <div class="cluster-enclosure" data-site-storage="s2d" id="primaryClusterEnclosure">
+                <!-- Hidden legacy title group refs for JS compatibility -->
+                <div class="sr-only-meta" hidden>
+                  <strong id="primaryClusterTitle"></strong>
+                  <span id="primaryClusterSub"></span>
+                  <div id="primaryClusterBadge"></div>
+                </div>
+
+                <!-- Dynamic / 4-Node Physical Server Row for Site 1 -->
+                <div id="primaryNodesRow" class="physical-servers-row"></div>
+
+                <!-- Site 1 Configurable Storage Stack (S2D Only / SAN Only / S2D + SAN) -->
+                <div id="primaryStorageStack" class="cluster-storage-stack">
+                  <div id="primaryStorageBar" class="shared-storage-bar s2d-fabric-bar" data-tip="Storage Spaces Direct (S2D)|Hyperconverged internal NVMe/SSD drives pooled across all cluster nodes into shared Cluster Shared Volumes (CSVs).|icons/azure-local.svg">
+                    <span>⇄ Shared S2D Storage Pool (Internal NVMe)</span>
+                  </div>
+
+                  <div id="primarySanBlock" class="external-san-section" hidden>
+                    <div class="external-san-card" data-tip="External SAN Storage Array|Attach Fibre Channel or iSCSI SAN arrays (Pure, Dell, HPE, Hitachi, NetApp) either alongside S2D (Hybrid) or standalone (Disaggregated SAN-only) as shared CSVs.|icons/storage.svg">
+                      <img src="icons/storage.svg" alt="External SAN Array" class="san-array-icon" />
+                      <div class="san-card-info">
+                        <strong>External SAN Array</strong>
+                        <span>Fibre Channel / iSCSI Shared Volumes</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ==================== SITE 2 (IDENTICAL TWIN CARD FOR HYPER-V REPLICA OR RACK-AWARE) ==================== -->
+        <section id="secondarySiteBox" class="datacenter-building secondary-site-building" aria-label="Second Azure Local Site">
+          <div class="dc-roof-header">
+            <div class="building-title">
+              <div class="building-icon">🏢</div>
+              <div>
+                <h2 id="secondarySiteTitle">Site B · 2-Node Cluster</h2>
+                <span id="secondarySiteSub">Secondary DR Site</span>
+              </div>
+            </div>
+
+            <div class="site-header-right">
+              <div class="cluster-header-controls site-inline-controls">
+                <div class="storage-mode-toggle" data-storage-site="2" role="group" aria-label="Site 2 Storage Architecture">
+                  <span class="storage-toggle-lbl">Storage:</span>
+                  <button type="button" class="stg-btn active" data-stg-mode="s2d">S2D</button>
+                  <button type="button" class="stg-btn" data-stg-mode="san">SAN</button>
+                  <button type="button" class="stg-btn" data-stg-mode="both">S2D + SAN</button>
+                </div>
+              </div>
+
+              <div id="arcBridgeBadge2" class="arc-gateway-badge" data-tip="Azure Arc Bridge (Site 2)|Connects your second Azure Local site directly to the unified Azure Control Plane.|icons/azure-arc.svg">
+                <img src="icons/azure-arc.svg" alt="Azure Arc" />
+                <strong id="arcBridgeText2">Azure Arc</strong>
+              </div>
+            </div>
+          </div>
+
+          <div class="dc-floor secondary-dc-floor">
+            <div id="workloadFloor2" class="workload-floor">
+              <div class="cluster-enclosure" data-site-storage="s2d" id="secondaryClusterEnclosure">
+                <div class="sr-only-meta" hidden>
+                  <strong id="secondaryClusterTitle"></strong>
+                  <span id="secondaryClusterSub"></strong>
+                  <div id="secondaryClusterBadge"></div>
+                </div>
+
+                <!-- Dynamic Customizable Nodes Row for Site 2 -->
+                <div id="secondaryNodesRow" class="physical-servers-row cols-2"></div>
+
+                <!-- Site 2 Configurable Storage Stack -->
+                <div id="secondaryStorageStack" class="cluster-storage-stack">
+                  <div id="secondaryStorageBar" class="shared-storage-bar s2d-fabric-bar" data-tip="Storage Spaces Direct (S2D)|Hyperconverged internal NVMe/SSD drives pooled across Site 2 nodes into shared Cluster Shared Volumes (CSVs).|icons/azure-local.svg">
+                    <span>⇄ Shared S2D Storage Pool (Internal NVMe)</span>
+                  </div>
+
+                  <div id="secondarySanBlock" class="external-san-section" hidden>
+                    <div class="external-san-card" data-tip="External SAN Storage Array (Site 2)|Site 2 can independently use S2D only, SAN only (Disaggregated), or S2D + SAN together.|icons/storage.svg">
+                      <img src="icons/storage.svg" alt="External SAN Array" class="san-array-icon" />
+                      <div class="san-card-info">
+                        <strong>External SAN Array</strong>
+                        <span>Fibre Channel / iSCSI Shared Volumes</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+      </div>
+
+      <!-- Unified Stretched Synchronous Storage Bar (Shown in Rack-Aware Cluster Mode) -->
+      <div id="rackAwareStorageFooter" class="rack-aware-storage-footer" hidden data-tip="Rack-Aware Synchronous Storage Pool|One single Storage Spaces Direct pool stretched across Site 1 (Zone 1) and Site 2 (Zone 2) over ≤1ms dedicated RDMA links—every write is mirrored synchronously in both zones!|icons/azure-local.svg">
+        ⇄ Single Stretched S2D Pool · Synchronously Mirrored Across Zone 1 &amp; Zone 2 (&lt; 1 ms RDMA)
+      </div>
+    </div>
+  </main>
+
+  <!-- 3 Bite-Sized Summary Cards -->
+  <section class="three-pillars" aria-label="Key Benefits">
+    <div class="pillar-card">
+      <img src="icons/arc-machine.svg" alt="" />
+      <div>
+        <strong>Runs on Your Hardware</strong>
+        <p>Keep apps, VMs, and sensitive data inside your own datacenter, factory, hospital, or retail store.</p>
+      </div>
+    </div>
+    <div class="pillar-card">
+      <img src="icons/azure-arc.svg" alt="" />
+      <div>
+        <strong>Cloud-Managed Simplicity</strong>
+        <p>Use the exact same Azure Portal and tools to manage local servers—even surviving 30-day internet outages.</p>
+      </div>
+    </div>
+    <div class="pillar-card">
+      <img src="icons/key-vault.svg" alt="" />
+      <div>
+        <strong>Disconnected Sovereign Option</strong>
+        <p>Need zero internet? Bring the Azure Control Plane down onto 3 dedicated local management servers.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Scalable Visual Scenario & Demo Catalog Modal -->
+  <div id="scenarioGalleryBackdrop" class="catalog-modal-backdrop" hidden>
+    <div id="scenarioGalleryModal" class="catalog-modal" role="dialog" aria-modal="true" aria-labelledby="catalogModalTitle">
+      <div class="catalog-modal-header">
+        <div class="catalog-title-block">
+          <div class="catalog-badge-icon">✨</div>
+          <div>
+            <h2 id="catalogModalTitle">Scenario &amp; Demo Catalog</h2>
+            <p>Choose an interactive Azure Local architecture or failure simulation to run live on stage</p>
+          </div>
+        </div>
+
+        <div class="catalog-header-right">
+          <div class="catalog-search-wrap">
+            <span class="search-ico" aria-hidden="true">🔍</span>
+            <input id="catalogSearchInput" type="search" class="catalog-search-input" placeholder="Search scenarios, HA, DR, multi-site..." autocomplete="off" />
+          </div>
+          <button id="btnCloseCatalog" class="catalog-close-btn" type="button" aria-label="Close Scenario Catalog">✕</button>
+        </div>
+      </div>
+
+      <!-- Dynamic Category Filter Tabs (Scales automatically as new categories are added!) -->
+      <div id="catalogCategoryTabs" class="catalog-category-tabs" role="tablist" aria-label="Filter Scenarios by Category"></div>
+
+      <!-- Scrollable Visual Card Grid (Scales cleanly to 20–50+ scenarios!) -->
+      <div class="catalog-body-scroll">
+        <div id="catalogCardsGrid" class="catalog-cards-grid"></div>
+        <div id="catalogEmptyState" class="catalog-empty-state" hidden>
+          No scenarios match your search. Try another keyword or select <strong>All Demos</strong>.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Whisper-Light Tooltip Toast when clicking any icon -->
+  <div id="infoToast" class="mini-Modal" role="status" aria-live="polite">
+    <img id="toastIcon" src="icons/portal.svg" alt="" />
+    <div>
+      <strong id="toastTitle">Azure Control Plane</strong>
+      <p id="toastBody">The brain that manages your servers and VMs.</p>
+    </div>
+    <button id="closeToast" class="close-toast" type="button" aria-label="Close">✕</button>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
