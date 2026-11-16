@@ -521,6 +521,29 @@ body.light-mode .opt5-header-btn {
   transform: translateY(-1px);
 }
 
+.opt5-header-btn.scenario-discovery,
+body.light-mode .opt5-header-btn.scenario-discovery {
+  border-color: #f59e0b;
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.25);
+  animation: scenario-discovery-pulse 1.8s ease-out infinite;
+}
+
+@keyframes scenario-discovery-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.25);
+  }
+  60% {
+    box-shadow: 0 0 0 10px rgba(245, 158, 11, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .opt5-header-btn.scenario-discovery,
+  body.light-mode .opt5-header-btn.scenario-discovery {
+    animation: none;
+  }
+}
+
 .opt5-header-btn img {
   width: 17px;
   height: 17px;

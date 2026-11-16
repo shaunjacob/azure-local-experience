@@ -53,6 +53,9 @@ No Azure subscription, account sign-in, backend, or build step is required.
 
 Choose **Scenarios** in the top-right corner. Where available, use **Next** to
 step through a scenario or **Play All** for a guided sequence.
+An orange pulse highlights the menu on each page load until you first open it;
+switching scenarios does not restart the pulse. With reduced motion enabled,
+the menu uses a static orange highlight instead.
 
 | Scenario | What you can explore |
 | --- | --- |

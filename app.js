@@ -705,6 +705,7 @@ let activeCatalogCategory = 'All';
 let catalogSearchQuery = '';
 let c1DrawerOpen = false;
 let c1DrawerCategory = 'All';
+let hasOpenedScenarioPicker = false;
 
 function updateCatalogTriggerButton() {
   renderScenarioControlBar();
@@ -1535,7 +1536,7 @@ function renderScenarioControlBar() {
     ` : '';
 
     headerScenariosPicker.innerHTML = `
-      <button type="button" class="opt5-header-btn" id="opt5HeaderTriggerBtn">
+      <button type="button" class="opt5-header-btn${hasOpenedScenarioPicker ? '' : ' scenario-discovery'}" id="opt5HeaderTriggerBtn">
         ${currentMeta.iconHtml}
         <span>Scenarios: ${SHORT_SCENARIO_LABELS[scenario] || currentMeta.shortLabel}</span>
         <span>${c1DrawerOpen ? '▴' : '▾'}</span>
@@ -1545,6 +1546,7 @@ function renderScenarioControlBar() {
 
     document.getElementById('opt5HeaderTriggerBtn')?.addEventListener('click', e => {
       e.stopPropagation();
+      hasOpenedScenarioPicker = true;
       c1DrawerOpen = !c1DrawerOpen;
       renderScenarioControlBar();
     });
