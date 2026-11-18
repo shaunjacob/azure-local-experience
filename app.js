@@ -2,7 +2,15 @@ const body = document.body;
 const btnConnected = document.getElementById('btnConnected');
 const btnDisconnected = document.getElementById('btnDisconnected');
 const btnAddVm = document.getElementById('btnAddVm');
+const btnAddVmRack = document.getElementById('btnAddVmRack');
 const btnThemeToggle = document.getElementById('btnThemeToggle');
+const deployChooser = document.getElementById('deployChooser');
+const deployOptionGrid = document.getElementById('deployOptionGrid');
+const btnConfirmDeploy = document.getElementById('btnConfirmDeploy');
+const aksPodReplicaControls = document.getElementById('aksPodReplicaControls');
+const aksPodReplicaCount = document.getElementById('aksPodReplicaCount');
+const cvmAttestationStatus = document.getElementById('cvmAttestationStatus');
+const cvmAttestationBadge = document.getElementById('cvmAttestationBadge');
 
 const btnOpenCatalog = document.getElementById('btnOpenCatalog');
 const catalogTriggerLabel = document.getElementById('catalogTriggerLabel');
@@ -42,8 +50,14 @@ const secondaryClusterTitle = document.getElementById('secondaryClusterTitle');
 const secondaryClusterSub = document.getElementById('secondaryClusterSub');
 const secondaryClusterBadge = document.getElementById('secondaryClusterBadge');
 
+const primaryWorkloadsRow = document.getElementById('primaryWorkloadsRow');
+const secondaryWorkloadsRow = document.getElementById('secondaryWorkloadsRow');
 const primaryNodesRow = document.getElementById('primaryNodesRow');
 const secondaryNodesRow = document.getElementById('secondaryNodesRow');
+const primaryComputeRailSub = document.getElementById('primaryComputeRailSub');
+const secondaryComputeRailSub = document.getElementById('secondaryComputeRailSub');
+const primaryStorageRailSub = document.getElementById('primaryStorageRailSub');
+const secondaryStorageRailSub = document.getElementById('secondaryStorageRailSub');
 const mgmtNodesRow = document.getElementById('mgmtNodesRow');
 const mgmtClusterBox = document.getElementById('mgmtClusterBox');
 const localIdentityBox = document.getElementById('localIdentityBox');
@@ -59,6 +73,7 @@ const rackAwareStorageFooter = document.getElementById('rackAwareStorageFooter')
 const asrCloudVmSlot = document.getElementById('asrCloudVmSlot');
 const asrStandbyHint = document.getElementById('asrStandbyHint');
 const asrStatusSub = document.getElementById('asrStatusSub');
+const defaultAsrStandbyHtml = asrStandbyHint.innerHTML;
 
 const visualStage = document.getElementById('visualStage');
 const canvas = document.getElementById('flowCanvas');
@@ -70,11 +85,13 @@ const ctx = canvas.getContext('2d');
 let mode = 'connected'; // 'connected' | 'disconnected'
 let scenario = 'default'; // 'default' | 'wan-outage' | 'node-failure' | 'asr' | 'hvreplica' | 'rack-aware'
 let cableCut = false;
-let vmCount = 3;
 
 // Scenario-specific state
 let hvSite2Nodes = 2;          // Customizable 1..4 nodes in Site B
-let hvReplicationOn = false;   // Step 1: Hyper-V Replica active
+let hvReplicationOn = false;   // Step 1: Site-to-site replication active (Hyper-V Replica or ASR Preview)
+let twoSiteDrMethod = 'hyperv'; // 'hyperv' | 'asr'
+let twoSiteDrBusy = false;
+let twoSiteDrRunId = 0;
 let site1Offline = false;      // Site 1 disaster active (for ASR, Hyper-V Replica, or Rack-Aware Zone 1)
 let rackNodesPerZone = 2;      // Customizable 1..4 equal nodes per zone (1+1, 2+2, 3+3, 4+4)
 let evacuatedRecords = [];     // Stores { pill, homeBox } for smooth failback
@@ -89,18 +106,69 @@ let aumAutoTimers = [];        // Active timers so we can cancel cleanly on scen
 let policyStep = 'idle';       // 'idle' | 'audited' | 'remediated' | 'tested'
 let demoAutoPlayActive = false;
 let demoAutoPlayTimers = [];
+let confidentialStep = 0;
+let confidentialBusy = false;
+let confidentialRunId = 0;
+let deploymentPodCount = 0;
+let deploymentRunId = 0;
 
 // Per-cluster storage architecture: 's2d' | 'san' | 'both'
 let site1StorageMode = 's2d';
 let site2StorageMode = 's2d';
 
+function twoSiteSanOnly() {
+  return site1StorageMode === 'san' && site2StorageMode === 'san';
+}
+
+function isTwoSiteAsrEligible() {
+  return twoSiteSanOnly() && mode === 'connected';
+}
+
+function isTwoSiteAsrActive() {
+  return scenario === 'hvreplica' && twoSiteDrMethod === 'asr' && isTwoSiteAsrEligible();
+}
+
+function syncTwoSitePresentation() {
+  if (scenario === 'hvreplica' && twoSiteDrMethod === 'asr' && !isTwoSiteAsrEligible()) {
+    twoSiteDrMethod = 'hyperv';
+  }
+  if (scenario !== 'hvreplica') return;
+
+  headlineText.textContent = 'Disaster Recovery to a 2nd Azure Local Site';
+  if (twoSiteDrMethod === 'asr') {
+    secondarySiteSub.textContent = twoSiteDrBusy
+      ? `ASR (SAN Only · Preview) · ${site1Offline ? 'failover' : 'failback'} in progress`
+      : (site1Offline
+        ? 'ASR (SAN Only · Preview) · workloads running on Site B'
+        : (hvReplicationOn ? 'ASR (SAN Only · Preview) · replicating from Site 1' : 'ASR (SAN Only · Preview) · SAN-to-SAN target site'));
+    subheadText.innerHTML = 'With <strong>SAN</strong> attached at both sites, <strong>Azure Site Recovery (Preview)</strong> orchestrates VM replication, failover, and failback directly across Site 1 and Site B.';
+  } else {
+    secondarySiteSub.textContent = twoSiteDrBusy
+      ? `Hyper-V Replica · ${site1Offline ? 'failover' : 'failback'} in progress`
+      : (site1Offline
+        ? 'Hyper-V Replica · workloads running on Site B'
+        : (hvReplicationOn ? 'Hyper-V Replica · syncing from Site 1' : 'Hyper-V Replica target site'));
+    subheadText.innerHTML = twoSiteSanOnly()
+      ? 'Both sites have <strong>SAN</strong> attached: replicate across sites with <strong>Hyper-V Replica</strong> or choose <strong>ASR (SAN Only) Preview</strong> for Azure-orchestrated recovery.'
+      : 'Asynchronous site-to-site VM replication using <strong>Hyper-V Replica</strong> across independent clusters, or select <strong>ASR (SAN Only) Preview</strong> to switch both sites to <strong>SAN</strong>.';
+  }
+}
+
+function syncTwoSiteStorageControls() {
+  const locked = scenario === 'hvreplica' && (site1Offline || twoSiteDrBusy);
+  document.querySelectorAll('#datacenterBox .stg-btn, #secondarySiteBox .stg-btn').forEach(button => {
+    button.disabled = locked;
+    button.title = locked ? 'Reset or complete the recovery walkthrough before changing storage.' : '';
+  });
+}
+
 const BASE_WORKLOADS = [
   { name: 'App-VM-01', icon: 'icons/vm.svg', cls: '', replicable: true },
-  { name: 'AKS-Node-01', icon: 'icons/aks.svg', cls: 'aks', replicable: false },
+  { name: 'AKS-Node-01', icon: 'icons/aks.svg', cls: 'aks', replicable: false, initialPods: 2 },
   { name: 'SQL-Srv-01', icon: 'icons/sql-mi.svg', cls: 'sql', replicable: true },
-  { name: 'AKS-Node-02', icon: 'icons/aks.svg', cls: 'aks', replicable: false },
+  { name: 'AKS-Node-02', icon: 'icons/aks.svg', cls: 'aks', replicable: false, initialPods: 2 },
   { name: 'Web-VM-02', icon: 'icons/vm.svg', cls: '', replicable: true },
-  { name: 'AKS-Node-03', icon: 'icons/aks.svg', cls: 'aks', replicable: false },
+  { name: 'AKS-Node-03', icon: 'icons/aks.svg', cls: 'aks', replicable: false, initialPods: 2 },
   { name: 'App-VM-03', icon: 'icons/vm.svg', cls: '', replicable: true },
   { name: 'Foundry-AI-01', icon: 'icons/ai.svg', cls: 'ai', replicable: false }
 ];
@@ -126,13 +194,72 @@ function buildManagementCluster() {
 // ============================================================================
 // NODE & WORKLOAD BUILDER HELPERS
 // ============================================================================
+function getWorkloadBox(col) {
+  return col?.workloadSlot || col?.querySelector('.node-workloads') || null;
+}
+
+function getHostColumnFromElement(el) {
+  if (!el) return null;
+  return el.closest('.node-column') || el.closest('.node-workloads')?.hostColumn || null;
+}
+
+function getWorkerPodCount(workerPill) {
+  return Math.max(0, Number(workerPill?.dataset.podCount || 0));
+}
+
+function setWorkerPodCount(workerPill, count, options = {}) {
+  if (!workerPill) return;
+  const safeCount = Math.max(0, Math.round(Number(count) || 0));
+  workerPill.dataset.podCount = String(safeCount);
+  let badge = workerPill.querySelector('.aks-pod-count-pill');
+  if (!badge) {
+    badge = document.createElement('span');
+    badge.className = 'aks-pod-count-pill';
+    const removeBtn = workerPill.querySelector(':scope > .workload-remove');
+    if (removeBtn) {
+      workerPill.insertBefore(badge, removeBtn);
+    } else {
+      workerPill.appendChild(badge);
+    }
+  }
+  badge.textContent = `${safeCount} ${safeCount === 1 ? 'Pod' : 'Pods'}`;
+  badge.classList.toggle('idle-ready', safeCount === 0);
+  badge.classList.toggle('boosted', Boolean(options.boosted) && safeCount > 0);
+  badge.title = safeCount === 0
+    ? '0 application pods running · worker node Ready for scheduling'
+    : `${safeCount} application ${safeCount === 1 ? 'pod' : 'pods'} running on ${workerPill.dataset.vmName || 'AKS worker'}`;
+}
+
 function createVmPillElement(w) {
   const div = document.createElement('div');
-  div.className = `vm-pill ${w.cls || ''}`.trim();
+  div.className = `vm-pill ${w.cls || ''} ${w.extraClass || ''} ${w.removable ? 'is-removable' : ''}`.trim();
   div.dataset.replicable = w.replicable ? 'true' : 'false';
   div.dataset.vmName = w.name;
+  div.dataset.workloadKind = w.kind || (w.cls === 'aks' ? 'aks-node' : 'vm');
   div.innerHTML = `<span class="run-dot"></span><img src="${w.icon}" alt="" /><span class="pill-name">${w.name}</span>`;
+  if (div.dataset.workloadKind === 'aks-node') {
+    const initialPods = typeof w.initialPods === 'number' ? w.initialPods : 0;
+    setWorkerPodCount(div, initialPods);
+  }
+  if (w.removable) {
+    const removeButton = createWorkloadRemoveButton(w.name, button => removeSimulatedWorkload(div, button));
+    div.appendChild(removeButton);
+  }
   return div;
+}
+
+function createWorkloadRemoveButton(name, onRemove) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'workload-remove';
+  button.textContent = '×';
+  button.setAttribute('aria-label', `Remove ${name}`);
+  button.title = `Remove ${name}`;
+  button.addEventListener('click', event => {
+    event.stopPropagation();
+    onRemove(button);
+  });
+  return button;
 }
 
 function randInt(min, max) {
@@ -143,11 +270,11 @@ function clamp(min, max, val) {
   return Math.max(min, Math.min(max, Math.round(val)));
 }
 
-function createNodeColumnElement(label, index, computeLabel = 'CPU', nvmeLabel = 'Storage', allowClickFail = false) {
+function createNodeColumnElement(label, index, computeLabel = 'CPU', nvmeLabel = 'Memory', allowClickFail = false, workloadsRow = null) {
   const col = document.createElement('div');
   col.className = 'node-column';
   col.dataset.nodeIndex = String(index);
-  // Assign distinct randomized per-node baseline offsets for Compute & NVMe
+  // Assign distinct randomized per-node baseline offsets for Compute & Memory
   const cpuJitter = randInt(-11, 16);
   let nvmeJitter = randInt(-10, 17);
   if (Math.abs(nvmeJitter - cpuJitter) < 4) {
@@ -162,7 +289,6 @@ function createNodeColumnElement(label, index, computeLabel = 'CPU', nvmeLabel =
         <span class="node-id-label">${label}</span>
         <span class="power-pill"><i class="pwr-dot"></i> <span class="pwr-text">ONLINE</span></span>
       </div>
-      <div class="node-workloads"></div>
       <div class="node-hardware-base">
         <div class="hw-metric-group">
           <div class="hw-metrics-row">
@@ -181,8 +307,16 @@ function createNodeColumnElement(label, index, computeLabel = 'CPU', nvmeLabel =
         <div class="node-version-badge">OS &amp; SBE v2509 · Update Ready</div>
       </div>
     </div>
-    <div class="bus-connector" aria-hidden="true"></div>
   `;
+
+  const workloadSlot = document.createElement('div');
+  workloadSlot.className = 'node-workloads workload-host-slot';
+  workloadSlot.dataset.nodeIndex = String(index);
+  workloadSlot.hostColumn = col;
+  col.workloadSlot = workloadSlot;
+  if (workloadsRow) {
+    workloadsRow.appendChild(workloadSlot);
+  }
 
   if (allowClickFail) {
     col.querySelector('.node-unit').addEventListener('click', e => {
@@ -206,6 +340,7 @@ function updateContainerLoads(rowEl) {
     const nvmeBar = col.querySelector('.nvme-load-fill');
     const cpuLabel = col.querySelector('.cpu-pct');
     const nvmeLabel = col.querySelector('.nvme-pct');
+    const workloadBox = getWorkloadBox(col);
 
     if (col.classList.contains('offline')) {
       if (cpuBar) cpuBar.style.width = '0%';
@@ -215,8 +350,8 @@ function updateContainerLoads(rowEl) {
       return;
     }
 
-    const realVms = col.querySelectorAll('.node-workloads .vm-pill').length;
-    const ghosts = col.querySelectorAll('.node-workloads .ghost-replica-pill').length;
+    const realVms = workloadBox ? workloadBox.querySelectorAll('.vm-pill').length : 0;
+    const ghosts = workloadBox ? workloadBox.querySelectorAll('.ghost-replica-pill').length : 0;
     const cpuJ = Number(col.dataset.cpuJitter || 0) + randInt(-2, 2);
     const nvmeJ = Number(col.dataset.nvmeJitter || 0) + randInt(-2, 2);
 
@@ -226,7 +361,7 @@ function updateContainerLoads(rowEl) {
       cpuPct = clamp(22, 93, 21 + realVms * 16 + cpuJ);
       nvmePct = clamp(19, 91, 18 + realVms * 14 + nvmeJ);
     } else if (ghosts > 0) {
-      // Replica standby: low CPU overhead, moderate NVMe storage for synced replica VHDs
+      // Replica standby: low CPU overhead, moderate Memory reservation
       cpuPct = clamp(6, 18, 10 + Math.round(cpuJ * 0.35));
       nvmePct = clamp(24, 54, 24 + ghosts * 8 + Math.round(nvmeJ * 0.5));
     } else {
@@ -247,32 +382,45 @@ function updateContainerLoads(rowEl) {
 
 // Build Default 4-Node Site 1 Cluster
 function buildStandardPrimaryCluster() {
+  if (primaryWorkloadsRow) {
+    primaryWorkloadsRow.className = 'physical-servers-row cols-4';
+    primaryWorkloadsRow.innerHTML = '';
+  }
   primaryNodesRow.className = 'physical-servers-row cols-4';
   primaryNodesRow.innerHTML = '';
+  if (primaryComputeRailSub) primaryComputeRailSub.textContent = 'Nodes 1–4 Hardware';
+
   for (let i = 1; i <= 4; i++) {
     const cpuLbl = i === 4 ? 'CPU & GPU' : 'CPU';
-    const col = createNodeColumnElement(`Node ${i}`, i, cpuLbl, 'Storage', true);
+    const col = createNodeColumnElement(`Node ${i}`, i, cpuLbl, 'Memory', true, primaryWorkloadsRow);
     primaryNodesRow.appendChild(col);
   }
   const cols = Array.from(primaryNodesRow.children);
   BASE_WORKLOADS.forEach((w, idx) => {
     const targetCol = cols[Math.floor(idx / 2) % cols.length];
-    targetCol.querySelector('.node-workloads').appendChild(createVmPillElement(w));
+    getWorkloadBox(targetCol).appendChild(createVmPillElement(w));
   });
   updateContainerLoads(primaryNodesRow);
 }
 
 // Build Site 2 Cluster for Hyper-V Replica (1..4 customizable nodes)
 function buildHvReplicaSite2Cluster() {
+  if (secondaryWorkloadsRow) {
+    secondaryWorkloadsRow.className = `physical-servers-row cols-${hvSite2Nodes}`;
+    secondaryWorkloadsRow.innerHTML = '';
+  }
   secondaryNodesRow.className = `physical-servers-row cols-${hvSite2Nodes}`;
   secondaryNodesRow.innerHTML = '';
+  if (secondaryComputeRailSub) {
+    secondaryComputeRailSub.textContent = hvSite2Nodes === 1 ? 'Node 1 Hardware' : `Nodes 1–${hvSite2Nodes} Hardware`;
+  }
   secondaryClusterTitle.textContent = `${hvSite2Nodes}-Node Cluster`;
   if (scenario === 'hvreplica') {
     secondarySiteTitle.textContent = `Site B · ${hvSite2Nodes}-Node Cluster`;
   }
 
   for (let i = 1; i <= hvSite2Nodes; i++) {
-    const col = createNodeColumnElement(`Node ${i}`, i, 'CPU', 'Storage', false);
+    const col = createNodeColumnElement(`Node ${i}`, i, 'CPU', 'Memory', false, secondaryWorkloadsRow);
     const pwrText = col.querySelector('.pwr-text');
     pwrText.textContent = site1Offline ? 'LIVE · DR' : (hvReplicationOn ? 'REPLICA' : 'STANDBY');
     secondaryNodesRow.appendChild(col);
@@ -285,38 +433,64 @@ function renderHvSite2StandbyState() {
   if (scenario !== 'hvreplica' || site1Offline) return;
   const site2Cols = Array.from(secondaryNodesRow.children);
   site2Cols.forEach(c => {
-    c.querySelector('.node-workloads').innerHTML = '';
-    c.querySelector('.pwr-text').textContent = hvReplicationOn ? 'REPLICA' : 'STANDBY';
+    const workloads = getWorkloadBox(c);
+    if (!workloads) return;
+    workloads.querySelectorAll('.ghost-replica-pill, .idle-slot-hint').forEach(element => element.remove());
+    c.querySelector('.pwr-text').textContent = workloads.querySelector('.vm-pill')
+      ? 'ONLINE'
+      : (hvReplicationOn ? 'REPLICA' : 'STANDBY');
   });
 
   if (hvReplicationOn) {
-    const replicablePills = Array.from(primaryNodesRow.querySelectorAll('.vm-pill[data-replicable="true"]'));
+    const isAsr = isTwoSiteAsrActive();
+    const replicablePills = Array.from(primaryWorkloadsRow.querySelectorAll('.vm-pill[data-replicable="true"]'));
     replicablePills.forEach((pill, idx) => {
-      const destBox = site2Cols[idx % site2Cols.length].querySelector('.node-workloads');
+      const destBox = getWorkloadBox(site2Cols[idx % site2Cols.length]);
+      if (!destBox) return;
       const ghost = document.createElement('div');
-      ghost.className = 'ghost-replica-pill';
-      ghost.textContent = `◌ ${pill.dataset.vmName} (Replica)`;
+      ghost.className = isAsr ? 'ghost-replica-pill asr-replica' : 'ghost-replica-pill';
+      ghost.dataset.vmName = pill.dataset.vmName;
+      ghost.textContent = isAsr ? `◌ ${pill.dataset.vmName} (ASR)` : `◌ ${pill.dataset.vmName} (Replica)`;
       destBox.appendChild(ghost);
     });
-    secondaryClusterSub.textContent = 'Hyper-V Replica syncing changes every 30s / 5m / 15m';
+    secondaryClusterSub.textContent = isAsr
+      ? 'ASR (Preview) replicating SAN-backed VMs directly from Site 1 to Site B'
+      : 'Hyper-V Replica syncing changes every 30s / 5m / 15m';
   } else {
+    const isAsr = isTwoSiteAsrActive();
     site2Cols.forEach(c => {
+      const workloads = getWorkloadBox(c);
+      if (!workloads || workloads.querySelector('.vm-pill')) return;
       const hint = document.createElement('div');
       hint.className = 'idle-slot-hint';
-      hint.textContent = 'Ready for replication';
-      c.querySelector('.node-workloads').appendChild(hint);
+      hint.textContent = isAsr ? 'Ready for ASR replication' : 'Ready for replication';
+      workloads.appendChild(hint);
     });
-    secondaryClusterSub.textContent = 'Click "1. Start Hyper-V Replica" in the Demo Player above to replicate Site 1 VMs';
+    secondaryClusterSub.textContent = isAsr
+      ? 'Start ASR (Preview) to replicate SAN-backed VMs from Site 1 to Site B.'
+      : 'Start Hyper-V Replica to replicate Site 1 VMs to Site B.';
   }
   updateContainerLoads(secondaryNodesRow);
 }
 
 // Build Unified Rack-Aware Cluster (Equal 1..4 nodes in Zone 1 & Zone 2)
 function buildRackAwareClusters() {
+  if (primaryWorkloadsRow) {
+    primaryWorkloadsRow.className = `physical-servers-row cols-${rackNodesPerZone}`;
+    primaryWorkloadsRow.innerHTML = '';
+  }
+  if (secondaryWorkloadsRow) {
+    secondaryWorkloadsRow.className = `physical-servers-row cols-${rackNodesPerZone}`;
+    secondaryWorkloadsRow.innerHTML = '';
+  }
   primaryNodesRow.className = `physical-servers-row cols-${rackNodesPerZone}`;
   secondaryNodesRow.className = `physical-servers-row cols-${rackNodesPerZone}`;
   primaryNodesRow.innerHTML = '';
   secondaryNodesRow.innerHTML = '';
+
+  const hwLabel = rackNodesPerZone === 1 ? 'Node 1 Hardware' : `Nodes 1–${rackNodesPerZone} Hardware`;
+  if (primaryComputeRailSub) primaryComputeRailSub.textContent = hwLabel;
+  if (secondaryComputeRailSub) secondaryComputeRailSub.textContent = hwLabel;
 
   const nodeWord = `${rackNodesPerZone} Node${rackNodesPerZone > 1 ? 's' : ''}`;
   primarySiteTitle.textContent = `Site 1 · Zone 1 (${nodeWord})`;
@@ -325,8 +499,8 @@ function buildRackAwareClusters() {
   secondaryClusterTitle.textContent = `Zone 2 · ${nodeWord}`;
 
   for (let i = 1; i <= rackNodesPerZone; i++) {
-    primaryNodesRow.appendChild(createNodeColumnElement(`Node ${i}`, i, 'CPU', 'Storage', false));
-    secondaryNodesRow.appendChild(createNodeColumnElement(`Node ${i}`, i, 'CPU', 'Storage', false));
+    primaryNodesRow.appendChild(createNodeColumnElement(`Node ${i}`, i, 'CPU', 'Memory', false, primaryWorkloadsRow));
+    secondaryNodesRow.appendChild(createNodeColumnElement(`Node ${i}`, i, 'CPU', 'Memory', false, secondaryWorkloadsRow));
   }
 
   // Distribute active VMs & AKS nodes evenly across BOTH Zone 1 and Zone 2 simultaneously!
@@ -336,7 +510,7 @@ function buildRackAwareClusters() {
   BASE_WORKLOADS.forEach((w, idx) => {
     const targetZoneCols = zoneMap[idx % zoneMap.length] === 0 ? z1Cols : z2Cols;
     const col = targetZoneCols[Math.floor(idx / 2) % targetZoneCols.length];
-    col.querySelector('.node-workloads').appendChild(createVmPillElement(w));
+    getWorkloadBox(col).appendChild(createVmPillElement(w));
   });
 
   updateContainerLoads(primaryNodesRow);
@@ -351,8 +525,8 @@ function applyRackAwareStorageFooterText() {
   if (!rackAwareStorageFooter) return;
   const raMeta = document.getElementById('rackAwareMetaText');
   if (site1StorageMode === 'san') {
-    rackAwareStorageFooter.innerHTML = '⇄ Stretched Enterprise SAN Only · Synchronously Replicated Across Zone 1 &amp; Zone 2 (&lt; 5 ms Latency · Zero Data Loss)';
-    rackAwareStorageFooter.setAttribute('data-tip', 'Rack-Aware SAN Only (< 5 ms)|In a Rack-Aware stretched cluster using External SAN Only, storage arrays replicate synchronously across Zone 1 & Zone 2 with a round-trip latency requirement of < 5 ms.|icons/storage.svg');
+    rackAwareStorageFooter.innerHTML = '⇄ Enterprise SAN Only · Synchronously Replicated Across Zone 1 &amp; Zone 2 (&lt; 5 ms Latency · Zero Data Loss)';
+    rackAwareStorageFooter.setAttribute('data-tip', 'Rack Aware SAN Only (< 5 ms)|In a Rack Aware cluster using External SAN Only, storage arrays replicate synchronously across Zone 1 & Zone 2 with a latency requirement of < 5 ms.|icons/storage.svg');
     if (raMeta) {
       raMeta.textContent = 'SAN Only (< 5 ms Latency) · Zero Data Loss';
     }
@@ -360,8 +534,8 @@ function applyRackAwareStorageFooterText() {
       secondarySiteSub.textContent = 'Availability Zone 2 · SAN (< 5 ms)';
     }
   } else {
-    rackAwareStorageFooter.innerHTML = '⇄ Single Stretched S2D Pool · Synchronously Mirrored Across Zone 1 &amp; Zone 2 (&lt; 1 ms RDMA · Zero Data Loss)';
-    rackAwareStorageFooter.setAttribute('data-tip', 'Rack-Aware S2D Only (< 1 ms)|In a Rack-Aware stretched cluster using Storage Spaces Direct (S2D Only), internal NVMe drives mirror synchronously across Zone 1 & Zone 2 requiring < 1 ms RDMA round-trip latency.|icons/azure-local.svg');
+    rackAwareStorageFooter.innerHTML = '⇄ Single S2D Pool · Synchronously Mirrored Across Zone 1 &amp; Zone 2 (&lt; 1 ms RDMA · Zero Data Loss)';
+    rackAwareStorageFooter.setAttribute('data-tip', 'Rack Aware S2D Only (< 1 ms)|In a Rack Aware cluster using Storage Spaces Direct (S2D Only), internal NVMe drives mirror synchronously across Zone 1 & Zone 2 requiring < 1 ms RDMA latency.|icons/azure-local.svg');
     if (raMeta) {
       raMeta.textContent = 'S2D Only (< 1 ms RDMA) · Zero Data Loss';
     }
@@ -372,6 +546,12 @@ function applyRackAwareStorageFooterText() {
 }
 
 function applyClusterStorageMode(siteNum, nextStgMode, announce = false) {
+  let switchedFromAsrToHyperv = false;
+  if (scenario === 'hvreplica' && announce && (site1Offline || twoSiteDrBusy)) {
+    showToast('Recovery In Progress', 'Complete failback or clear the scenario before changing storage.', 'icons/storage.svg');
+    return;
+  }
+
   if (scenario === 'rack-aware') {
     // Rack-Aware clusters only support S2D Only (< 1 ms) or SAN Only (< 5 ms), never S2D + SAN combined
     if (nextStgMode === 'both') nextStgMode = 's2d';
@@ -383,11 +563,21 @@ function applyClusterStorageMode(siteNum, nextStgMode, announce = false) {
     site2StorageMode = nextStgMode;
   }
 
-  const syncSingleSiteDom = (enclosure, s2dBar, sanBlock, toggleRoots, stgMode) => {
+  if (scenario === 'hvreplica' && twoSiteDrMethod === 'asr' && !twoSiteSanOnly()) {
+    stopDemoAutoPlay();
+    hvReplicationOn = false;
+    twoSiteDrMethod = 'hyperv';
+    switchedFromAsrToHyperv = true;
+  }
+
+  const syncSingleSiteDom = (enclosure, s2dBar, sanBlock, railSubEl, toggleRoots, stgMode) => {
     if (!enclosure) return;
     enclosure.dataset.siteStorage = stgMode;
     if (s2dBar) s2dBar.hidden = stgMode === 'san';
     if (sanBlock) sanBlock.hidden = stgMode === 's2d';
+    if (railSubEl) {
+      railSubEl.textContent = stgMode === 'san' ? 'External SAN' : (stgMode === 'both' ? 'S2D + SAN' : 'S2D Pool');
+    }
     toggleRoots.forEach(toggleRoot => {
       toggleRoot.querySelectorAll('.stg-btn').forEach(btn => {
         const modeVal = btn.getAttribute('data-stg-mode');
@@ -407,6 +597,7 @@ function applyClusterStorageMode(siteNum, nextStgMode, announce = false) {
     primaryClusterEnclosure,
     primaryStorageBar,
     primarySanBlock,
+    primaryStorageRailSub,
     Array.from(document.querySelectorAll('.storage-mode-toggle[data-storage-site="1"]')),
     site1StorageMode
   );
@@ -415,26 +606,40 @@ function applyClusterStorageMode(siteNum, nextStgMode, announce = false) {
     secondaryClusterEnclosure,
     secondaryStorageBar,
     secondarySanBlock,
+    secondaryStorageRailSub,
     Array.from(document.querySelectorAll('.storage-mode-toggle[data-storage-site="2"]')),
     site2StorageMode
   );
 
   applyRackAwareStorageFooterText();
+  if (scenario === 'hvreplica') {
+    syncTwoSitePresentation();
+    renderHvSite2StandbyState();
+    if (announce) renderScenarioControlBar();
+  }
   setTimeout(resizeCanvas, 80);
 
   if (announce) {
+    if (switchedFromAsrToHyperv) {
+      showToast(
+        'Switched to Hyper-V Replica',
+        'S2D exists on at least one site, so 2nd Site DR switched to Hyper-V Replica. Select ASR (SAN Only) Preview anytime to switch both sites back to SAN.',
+        'icons/azure-local.svg'
+      );
+      return;
+    }
     const isRa = scenario === 'rack-aware';
     const titles = {
-      s2d: isRa ? 'Rack-Aware S2D Only (< 1 ms RDMA)' : 'Storage Spaces Direct (S2D Only)',
-      san: isRa ? 'Rack-Aware SAN Only (< 5 ms Latency)' : 'External SAN Only (Disaggregated)',
+      s2d: isRa ? 'Rack Aware S2D Only (< 1 ms RDMA)' : 'Storage Spaces Direct (S2D Only)',
+      san: isRa ? 'Rack Aware SAN Only (< 5 ms Latency)' : 'External SAN Only (Disaggregated)',
       both: 'Hybrid Storage: S2D + External SAN'
     };
     const descs = {
       s2d: isRa
-        ? 'Stretched S2D mirrors internal NVMe synchronously across Zone 1 & Zone 2 (requires < 1 ms RDMA round-trip latency).'
+        ? 'Rack Aware S2D mirrors internal NVMe synchronously across Zone 1 & Zone 2 (requires < 1 ms RDMA latency).'
         : 'Hyperconverged internal NVMe/SSD drives pooled across cluster nodes into shared CSVs.',
       san: isRa
-        ? 'Stretched SAN-only cluster across Zone 1 & Zone 2 with synchronous array replication (supports < 5 ms round-trip latency).'
+        ? 'Rack Aware SAN only cluster across Zone 1 & Zone 2 with synchronous array replication (supports < 5 ms latency).'
         : 'Disaggregated compute nodes connected via Fibre Channel or iSCSI to an external enterprise SAN array.',
       both: 'Internal S2D NVMe pool running side-by-side with external Fibre Channel / iSCSI SAN CSVs on the same cluster.'
     };
@@ -454,6 +659,7 @@ document.querySelectorAll('.storage-mode-toggle').forEach(toggleGroup => {
 
 // Smooth FLIP flight for any VM / AKS pill
 function flyWorkloadPill(pill, targetContainer, showRestartState = true, customDuration = 1250) {
+  if (!pill.isConnected) return;
   const firstRect = pill.getBoundingClientRect();
   const labelEl = pill.querySelector('.pill-name');
   const origName = pill.dataset.vmName || (labelEl ? labelEl.textContent.replace(/^↻\s*/, '') : '');
@@ -520,10 +726,17 @@ function moveControlPlaneTo(targetDock, newLocationText) {
 
 function setMode(nextMode) {
   if (nextMode === mode) return;
+  closeDeployChooser(false);
 
   // Cloud-only scenarios reset cleanly if switching to Disconnected Mode
-  if (nextMode === 'disconnected' && (scenario === 'wan-outage' || scenario === 'asr' || scenario === 'update-manager')) {
+  if (nextMode === 'disconnected' && (scenario === 'wan-outage' || scenario === 'asr' || scenario === 'update-manager' ||
+      scenario === 'confidential-computing' ||
+      (scenario === 'hvreplica' && twoSiteDrMethod === 'asr' && (site1Offline || twoSiteDrBusy)))) {
     selectScenario('default');
+  } else if (nextMode === 'disconnected' && scenario === 'hvreplica' && twoSiteDrMethod === 'asr') {
+    stopDemoAutoPlay();
+    hvReplicationOn = false;
+    twoSiteDrMethod = 'hyperv';
   }
 
   mode = nextMode;
@@ -542,10 +755,12 @@ function setMode(nextMode) {
     dcStatusSub.textContent = 'Tenant Workload Cluster · Managed by your local 3-Node Management Cluster';
     const sqlSub = document.getElementById('sqlServiceSub');
     const aiSub = document.getElementById('aiServiceSub');
+    const aiTile = document.getElementById('localAiServiceTile');
     const ribSub = document.getElementById('servicesRibbonSub');
     if (sqlSub) sqlSub.textContent = 'SQL Server on Local VMs';
-    if (aiSub) aiSub.textContent = 'Doc Intel, Vision, Lang & Translator';
-    if (ribSub) ribSub.textContent = 'Disconnected Mode: Local VMs, AKS, ACR, SQL on VMs & Local AI Containers active (AVD requires Cloud)';
+    if (aiSub) aiSub.textContent = 'Foundry Local & local AI containers';
+    if (aiTile) aiTile.dataset.tip = 'Foundry Local on Azure Local|Disconnected deployment uses locally imported dependencies and model artifacts with local identity. Inference runs locally and does not require public-cloud connectivity.|icons/ai.svg';
+    if (ribSub) ribSub.textContent = 'Disconnected Mode: Local VMs, AKS, ACR, SQL on VMs, Foundry Local & AI Containers active (AVD requires Cloud)';
 
     document.querySelectorAll('[data-cloud-only="true"]').forEach(el => el.classList.add('cloud-only-dim'));
 
@@ -566,9 +781,11 @@ function setMode(nextMode) {
     dcStatusSub.textContent = 'All VMs, containers & data stay on your hardware';
     const sqlSub = document.getElementById('sqlServiceSub');
     const aiSub = document.getElementById('aiServiceSub');
+    const aiTile = document.getElementById('localAiServiceTile');
     const ribSub = document.getElementById('servicesRibbonSub');
     if (sqlSub) sqlSub.textContent = 'Arc-Enabled SQL on VMs';
     if (aiSub) aiSub.textContent = 'Foundry Local & Edge RAG';
+    if (aiTile) aiTile.dataset.tip = 'Local AI — Foundry Local, Edge RAG & Azure AI Containers|Connected Mode supports Foundry Local, Edge RAG & Azure ML. Foundry Local inference runs on Azure Local; model availability depends on the configured deployment.|icons/ai.svg';
     if (ribSub) ribSub.textContent = 'Supported in Connected Mode — switch to Disconnected Mode to compare';
 
     document.querySelectorAll('[data-cloud-only="true"]').forEach(el => el.classList.remove('cloud-only-dim'));
@@ -576,6 +793,11 @@ function setMode(nextMode) {
     moveControlPlaneTo(cloudDock, 'Unified Cloud Management & Governance');
   }
 
+  if (scenario === 'hvreplica') {
+    syncTwoSitePresentation();
+    renderHvSite2StandbyState();
+    renderScenarioControlBar();
+  }
   setTimeout(resizeCanvas, 260);
   setTimeout(resizeCanvas, 820);
 }
@@ -583,11 +805,10 @@ function setMode(nextMode) {
 btnConnected.addEventListener('click', () => setMode('connected'));
 btnDisconnected.addEventListener('click', () => setMode('disconnected'));
 
+body.classList.add('light-mode');
 if (btnThemeToggle) {
-  btnThemeToggle.addEventListener('click', () => {
-    const isLight = body.classList.toggle('light-mode');
-    btnThemeToggle.textContent = isLight ? '🌙' : '☀️';
-  });
+  btnThemeToggle.hidden = true;
+  btnThemeToggle.disabled = true;
 }
 
 // ============================================================================
@@ -639,38 +860,38 @@ const SCENARIO_CATALOG = [
     title: 'Cloud DR (Site Recovery)',
     shortLabel: 'Cloud DR (Site Recovery)',
     bentoSub: 'Failover VMs to Azure',
-    ruleSummary: '30s RPO Replication & Cloud Failover',
+    ruleSummary: 'VM Replication & Cloud Failover',
     category: 'Resiliency & DR',
     iconHtml: '<img src="icons/asr.svg" alt="" />',
     accent: 'accent-purple',
     cloudOnly: true,
-    desc: 'Continuously replicate local VMs to an Azure Recovery Services Vault (30s RPO) and fail over workloads into Azure Cloud.',
-    chips: ['30s Continuous RPO', 'Cloud Failover & Failback']
+    desc: 'Replicate local VM disks to Azure Storage and use a Recovery Services vault to coordinate failover to Azure.',
+    chips: ['RPO as Low as 30s', 'Cloud Failover & Failback']
   },
   {
     id: 'hvreplica',
-    title: '2nd Site DR Replica',
-    shortLabel: '2nd Site DR Replica',
-    bentoSub: 'Site 1 → Site B Failover',
-    ruleSummary: 'Async Hyper-V Replica (Site 1 → Site B)',
+    title: '2nd Site DR',
+    shortLabel: '2nd Site DR',
+    bentoSub: 'Site-to-Site Recovery',
+    ruleSummary: 'Hyper-V Replica (S2D/SAN) · ASR Preview (SAN-to-SAN)',
     category: 'Resiliency & DR',
     iconHtml: '<img src="icons/azure-local.svg" alt="" />',
     accent: 'accent-emerald',
     cloudOnly: false,
-    desc: 'Add an independent 2nd Azure Local site (1–4 custom nodes), start async Hyper-V Replica sync, and fail over Site 1 → Site B.',
-    chips: ['Custom 1–4 Nodes', '100% On-Prem DR', 'Works Air-Gapped']
+    desc: 'Replicate VMs across two Azure Local sites—using Hyper-V Replica when S2D is present, or Azure Site Recovery (Preview) when both sites use SAN.',
+    chips: ['1 to 4 Nodes in Site B', 'Hyper-V Replica', 'ASR Preview (SAN)']
   },
   {
     id: 'rack-aware',
-    title: 'Rack-Aware Cluster',
-    shortLabel: 'Rack-Aware Cluster',
-    bentoSub: 'Stretched Sync Zones',
-    ruleSummary: 'Stretched Sync Zones (0 Data Loss)',
+    title: 'Rack Aware Cluster',
+    shortLabel: 'Rack Aware Cluster',
+    bentoSub: 'Sync Availability Zones',
+    ruleSummary: 'Sync Availability Zones (0 Data Loss)',
     category: 'Resiliency & DR',
     iconHtml: '🔗',
     accent: '',
     cloudOnly: false,
-    desc: 'Stretch one single cluster across two rooms or buildings (1+1 up to 4+4) using S2D Only (< 1 ms RDMA) or SAN Only (< 5 ms) with zero-data-loss sync storage.',
+    desc: 'Span one single cluster across two rooms or buildings (1+1 up to 4+4) using S2D Only (< 1 ms RDMA) or SAN Only (< 5 ms) with zero data loss sync storage.',
     chips: ['S2D (< 1 ms) or SAN (< 5 ms)', '2 Availability Zones', '1+1 to 4+4 Layouts']
   },
   {
@@ -698,6 +919,19 @@ const SCENARIO_CATALOG = [
     cloudOnly: false,
     desc: 'Audit and auto-remediate inside-VM Guest OS settings (TLS 1.2 & Host Firewall via Azure Machine Configuration) across Azure Public Cloud and on-premises Azure Local.',
     chips: ['Azure Machine Configuration', 'In-Guest OS Baseline', 'Auto-Remediate Drift']
+  },
+  {
+    id: 'confidential-computing',
+    title: 'Confidential Computing',
+    shortLabel: 'Confidential Computing',
+    bentoSub: 'Attest Before Key Release',
+    ruleSummary: 'Hardware-backed attestation & secure key release',
+    category: 'Security & Confidentiality',
+    iconHtml: '<img src="icons/key-vault.svg" alt="" />',
+    accent: 'accent-purple',
+    cloudOnly: true,
+    desc: 'Follow an Azure Local confidential VM through hardware-backed attestation, policy-gated Azure Key Vault key release, and a denied claim.',
+    chips: ['AMD SEV-SNP Hardware', 'Microsoft Azure Attestation', 'Connected Mode Only']
   }
 ];
 
@@ -770,12 +1004,13 @@ function renderCatalogCards() {
 
   catalogCardsGrid.innerHTML = filtered.map(item => {
     const isActive = item.id === scenario;
+    const modeUnsupported = item.id === 'confidential-computing' && (mode === 'disconnected' || cableCut);
     const modeTagHtml = item.cloudOnly
-      ? `<span class="card-mode-tag cloud-only">☁️ Connected Mode</span>`
+      ? `<span class="card-mode-tag cloud-only">${modeUnsupported ? (cableCut ? 'Unavailable during WAN outage' : 'Unavailable in Disconnected Mode') : '☁️ Connected Mode'}</span>`
       : `<span class="card-mode-tag">✓ Connected &amp; Air-Gapped</span>`;
 
     return `
-      <button type="button" class="catalog-card ${isActive ? 'active' : ''}" data-launch-scenario="${item.id}">
+      <button type="button" class="catalog-card ${isActive ? 'active' : ''} ${modeUnsupported ? 'catalog-card-disabled' : ''}" data-launch-scenario="${item.id}" ${modeUnsupported ? 'disabled aria-disabled="true"' : ''}>
         <div class="card-top-meta">
           <div class="card-visual-badge ${item.accent}">${item.iconHtml}</div>
           <div class="card-badges-right">
@@ -791,8 +1026,8 @@ function renderCatalogCards() {
           ${item.chips.map(c => `<span class="card-chip">${c}</span>`).join('')}
         </div>
         <div class="card-footer-cta">
-          <span>${isActive ? '● Currently Active on Stage' : 'Launch Interactive Demo'}</span>
-          <span>${isActive ? '✓' : '→'}</span>
+          <span>${modeUnsupported ? (cableCut ? 'Restore Azure connectivity to launch' : 'Requires connected Azure services') : (isActive ? '● Currently Active on Stage' : 'Launch Interactive Demo')}</span>
+          <span>${modeUnsupported ? '🔒' : (isActive ? '✓' : '→')}</span>
         </div>
       </button>
     `;
@@ -855,7 +1090,10 @@ if (catalogSearchInput) {
 }
 
 document.addEventListener('keydown', e => {
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+  if (e.key === 'Escape' && deployChooser && !deployChooser.hidden) {
+    e.preventDefault();
+    closeDeployChooser();
+  } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k' && (!deployChooser || deployChooser.hidden)) {
     e.preventDefault();
     if (scenarioGalleryBackdrop && scenarioGalleryBackdrop.hidden) {
       openScenarioCatalog();
@@ -875,8 +1113,16 @@ function stopDemoAutoPlay() {
 
 function clearAllScenarioStates() {
   stopDemoAutoPlay();
+  deploymentRunId += 1;
+  deploymentPodCount = 0;
+  confidentialRunId += 1;
+  confidentialStep = 0;
+  confidentialBusy = false;
   cableCut = false;
   hvReplicationOn = false;
+  twoSiteDrMethod = 'hyperv';
+  twoSiteDrBusy = false;
+  twoSiteDrRunId += 1;
   site1Offline = false;
   evacuatedRecords = [];
   aumCurrentNodeIdx = 0;
@@ -894,8 +1140,14 @@ function clearAllScenarioStates() {
     'scenario-hvreplica',
     'scenario-rack-aware',
     'scenario-update-manager',
-    'scenario-policy'
+    'scenario-policy',
+    'scenario-confidential-computing',
+    'cvm-attested',
+    'cvm-key-released',
+    'cvm-policy-denied'
   );
+  if (cvmAttestationStatus) cvmAttestationStatus.textContent = 'Waiting for confidential VM evidence';
+  if (cvmAttestationBadge) cvmAttestationBadge.textContent = 'Attestation service';
 
   datacenterBox.classList.remove('site-outage');
   rackAwareHeader.hidden = true;
@@ -904,7 +1156,8 @@ function clearAllScenarioStates() {
   // Reset ASR Cloud Bay
   asrCloudVmSlot.querySelectorAll('.vm-pill').forEach(p => p.remove());
   asrStandbyHint.style.display = '';
-  asrStatusSub.textContent = 'Continuous VM replication active (30s RPO) · Standing by in Azure';
+  asrStandbyHint.innerHTML = defaultAsrStandbyHtml;
+  asrStatusSub.textContent = 'VM disks replicating to Azure Storage · RPO as low as 30s';
 
   // Rebuild clean default 4-node Site 1
   primarySiteTitle.textContent = 'Your Datacenter · 4-Node Cluster';
@@ -919,6 +1172,15 @@ function clearAllScenarioStates() {
 }
 
 function selectScenario(nextScenario) {
+  closeDeployChooser(false);
+  if (nextScenario === 'confidential-computing' && (mode === 'disconnected' || cableCut)) {
+    showToast(
+      'Connected Mode Required',
+      'The documented Azure Local confidential VM attestation and secure key release flow requires an active connection to Azure.',
+      'icons/key-vault.svg'
+    );
+    return;
+  }
   clearAllScenarioStates();
   scenario = nextScenario;
   c1DrawerOpen = false;
@@ -949,15 +1211,13 @@ function selectScenario(nextScenario) {
     body.classList.add('scenario-asr');
     primarySiteTitle.textContent = 'Site 1 · 4-Node Cluster';
     headlineText.textContent = 'Azure Site Recovery of Local VMs to Azure Cloud';
-    subheadText.innerHTML = 'Continuous purple replication syncs local VMs to <strong>Azure Recovery Services Vault</strong> (30s RPO) for cloud failover.';
+    subheadText.innerHTML = 'Continuous purple replication copies local VM disks to <strong>Azure Storage</strong>, with a Recovery Services vault coordinating cloud failover.';
     renderScenarioControlBar();
   } else if (scenario === 'hvreplica') {
     body.classList.add('scenario-hvreplica');
     primarySiteTitle.textContent = 'Site 1 · 4-Node Cluster';
     secondarySiteTitle.textContent = `Site B · ${hvSite2Nodes}-Node Cluster`;
-    secondarySiteSub.textContent = 'Hyper-V Replica Target Site';
-    headlineText.textContent = 'Disaster Recovery to a 2nd Azure Local Site (Hyper-V Replica)';
-    subheadText.innerHTML = 'Asynchronous VM replication between two independent on-premises Azure Local clusters — works Connected or Air-Gapped.';
+    syncTwoSitePresentation();
     buildHvReplicaSite2Cluster();
     renderScenarioControlBar();
   } else if (scenario === 'rack-aware') {
@@ -965,8 +1225,8 @@ function selectScenario(nextScenario) {
     rackAwareHeader.hidden = false;
     rackAwareStorageFooter.hidden = false;
     dcStatusSub.textContent = 'Availability Zone 1 (Room A)';
-    headlineText.textContent = 'Stretched Rack-Aware Cluster Across Two Availability Zones';
-    subheadText.innerHTML = 'Site 1 and Site 2 form <strong>one single cluster</strong> with synchronous storage (< 1 ms S2D or < 5 ms SAN) for zero-data-loss failover.';
+    headlineText.textContent = 'Rack Aware Cluster Across Two Availability Zones';
+    subheadText.innerHTML = 'Site 1 and Site 2 form <strong>one single cluster</strong> with synchronous storage (< 1 ms S2D or < 5 ms SAN) for zero data loss failover.';
     buildRackAwareClusters();
     applyClusterStorageMode(1, site1StorageMode, false);
     renderScenarioControlBar();
@@ -983,10 +1243,105 @@ function selectScenario(nextScenario) {
     subheadText.innerHTML = 'Audit and auto-remediate inside-VM Guest OS settings (<strong>TLS 1.2 &amp; Host Firewall</strong>) consistently across Azure and On-Premises.';
     initPolicyScenario();
     renderScenarioControlBar();
+  } else if (scenario === 'confidential-computing') {
+    headlineText.textContent = 'Confidential Computing — Verify Before Trust';
+    subheadText.innerHTML = 'Follow a confidential VM from hardware-backed attestation to policy-gated key release. Workload data stays on-premises; attestation and Azure Key Vault are cloud services.';
+    body.classList.add('scenario-confidential-computing');
+    cvmAttestationStatus.textContent = 'Waiting for confidential VM evidence';
+    cvmAttestationBadge.textContent = 'Attestation service';
+    renderScenarioControlBar();
   }
 
   setTimeout(resizeCanvas, 180);
   setTimeout(resizeCanvas, 680);
+}
+
+function sendTwoSiteAsrControlBurst(targetBadges) {
+  if (mode !== 'connected' || cableCut) return;
+  const origin = getCloudConduitOrigin();
+  targetBadges.forEach(badge => {
+    if (!badge || badge.getBoundingClientRect().width < 20) return;
+    const dest = relCenter(badge);
+    commandBursts.push({
+      sx: origin.x,
+      sy: origin.y,
+      tx: dest.x,
+      ty: dest.y,
+      t: 0,
+      color: '#c084fc'
+    });
+  });
+}
+
+function selectTwoSiteDrMethod(method) {
+  if (scenario !== 'hvreplica' || !['hyperv', 'asr'].includes(method)) return;
+  if (site1Offline || twoSiteDrBusy) {
+    showToast('Recovery In Progress', 'Fail back to Site 1 or clear the scenario before switching recovery methods.', 'icons/azure-local.svg');
+    return;
+  }
+  if (method === 'asr' && mode !== 'connected') {
+    showToast(
+      'Connected Mode Required',
+      'ASR (SAN Only) Preview requires Connected Mode so Azure Site Recovery can orchestrate replication between your two sites.',
+      'icons/asr.svg'
+    );
+    return;
+  }
+  if (method === twoSiteDrMethod && (method !== 'asr' || twoSiteSanOnly())) return;
+  stopDemoAutoPlay();
+  hvReplicationOn = false;
+  let autoSwitchedSan = false;
+  if (method === 'asr' && !twoSiteSanOnly()) {
+    if (site1StorageMode !== 'san') applyClusterStorageMode(1, 'san', false);
+    if (site2StorageMode !== 'san') applyClusterStorageMode(2, 'san', false);
+    autoSwitchedSan = true;
+  }
+  twoSiteDrMethod = method;
+  syncTwoSitePresentation();
+  renderHvSite2StandbyState();
+  renderScenarioControlBar();
+  setTimeout(resizeCanvas, 180);
+  if (autoSwitchedSan) {
+    showToast(
+      'ASR (SAN Only) · Preview Selected',
+      'Switched Site 1 and Site B storage to External SAN for Azure Site Recovery site-to-site replication (Preview).',
+      'icons/asr.svg'
+    );
+  }
+}
+
+function resizeTwoSiteNodes(count) {
+  if (site1Offline || twoSiteDrBusy) return;
+  if (secondaryWorkloadsRow?.querySelector('.vm-pill')) {
+    showToast('Site B Contains Workloads', 'Remove Site B workloads before changing its node count.', 'icons/azure-local.svg');
+    return;
+  }
+  hvSite2Nodes = count;
+  buildHvReplicaSite2Cluster();
+  renderScenarioControlBar();
+  setTimeout(resizeCanvas, 150);
+}
+
+function startTwoSiteHypervReplication() {
+  if (scenario !== 'hvreplica' || twoSiteDrBusy || site1Offline) return;
+  hvReplicationOn = true;
+  syncTwoSitePresentation();
+  renderHvSite2StandbyState();
+  renderScenarioControlBar();
+  if (isTwoSiteAsrActive()) {
+    sendTwoSiteAsrControlBurst([arcBridgeBadge, arcBridgeBadge2]);
+    showToast(
+      'ASR Site-to-Site Replication Started (Preview)',
+      `Azure Site Recovery is orchestrating SAN-backed VM replication directly from Site 1 to your ${hvSite2Nodes}-node Site B cluster.`,
+      'icons/asr.svg'
+    );
+  } else {
+    showToast(
+      'Hyper-V Replica Started (Site 1 → Site B)',
+      `VMs in Site 1 are now asynchronously replicating across to your ${hvSite2Nodes}-node Site B cluster.`,
+      'icons/azure-local.svg'
+    );
+  }
 }
 
 // ============================================================================
@@ -996,6 +1351,7 @@ function selectScenario(nextScenario) {
 // ============================================================================
 function renderScenarioControlBar() {
   if (!scenarioQuickStrip || !scenarioControlBar) return;
+  syncTwoSiteStorageControls();
 
   const currentIdx = SCENARIO_CATALOG.findIndex(s => s.id === scenario);
   const currentMeta = SCENARIO_CATALOG[currentIdx >= 0 ? currentIdx : 0];
@@ -1007,6 +1363,8 @@ function renderScenarioControlBar() {
   let nextActionCmd = '';
   let canPlayAll = false;
   let extraChipsHtml = '';
+  const controlsDisabled = aumBusy || confidentialBusy ||
+    (scenario === 'hvreplica' && twoSiteDrBusy);
 
   if (scenario === 'default') {
     stepsData = [
@@ -1037,7 +1395,7 @@ function renderScenarioControlBar() {
     canPlayAll = true;
   } else if (scenario === 'asr') {
     stepsData = [
-      { num: '1', label: 'Replicating (30s RPO)', state: 'done', attr: '' },
+      { num: '1', label: 'Replicating to Azure', state: 'done', attr: '' },
       { num: '2', label: !site1Offline ? 'Failover to Azure Cloud' : 'Running in Azure Cloud', state: !site1Offline ? 'active' : 'done', attr: 'data-c1-asr="failover"' },
       { num: '3', label: 'Failback On-Premises', state: site1Offline ? 'active' : '', attr: 'data-c1-asr="failback"' }
     ];
@@ -1045,23 +1403,40 @@ function renderScenarioControlBar() {
     nextActionCmd = 'asr-next';
     canPlayAll = true;
   } else if (scenario === 'hvreplica') {
+    const methodsLocked = site1Offline || twoSiteDrBusy;
+    const asrCanSelect = mode === 'connected';
+    const asrTitle = !asrCanSelect
+      ? 'ASR (SAN Only) Preview requires Connected Mode.'
+      : (!twoSiteSanOnly()
+        ? 'Select ASR (SAN Only) Preview and automatically switch Site 1 and Site B storage to External SAN.'
+        : 'Azure Site Recovery for Azure Local-to-Azure Local (Preview): replicates and fails over directly across your two SAN-backed sites.');
     extraChipsHtml = `
       <div class="c1-inline-chips" title="Site B Node Count">
         <span class="c1-chip-prefix">Site B:</span>
-        ${[1, 2, 3, 4].map(n => `<button class="c1-mini-chip ${hvSite2Nodes === n ? 'active' : ''}" data-s2-count="${n}" type="button">${n}N</button>`).join('')}
+        ${[1, 2, 3, 4].map(n => `<button class="c1-mini-chip ${hvSite2Nodes === n ? 'active' : ''}" data-s2-count="${n}" type="button" ${methodsLocked ? 'disabled' : ''}>${n}N</button>`).join('')}
+      </div>
+      <div class="c1-inline-chips two-site-methods" role="group" aria-label="Second-site recovery method">
+        <span class="c1-chip-prefix">Method:</span>
+        <button type="button" class="c1-mini-chip ${twoSiteDrMethod === 'hyperv' ? 'active' : ''}" data-two-site-method="hyperv" aria-pressed="${twoSiteDrMethod === 'hyperv'}" title="Replicates VMs over a network connection between the two sites (supports S2D, SAN, or hybrid)." ${methodsLocked ? 'disabled' : ''}>Hyper-V Replica</button>
+        <button type="button" class="c1-mini-chip ${twoSiteDrMethod === 'asr' ? 'active' : ''} ${!asrCanSelect ? 'is-unavailable' : ''}" data-two-site-method="asr" aria-pressed="${twoSiteDrMethod === 'asr'}" aria-disabled="${methodsLocked || !asrCanSelect}" title="${asrTitle}" ${methodsLocked ? 'disabled' : ''}>ASR (SAN Only) <span class="dr-preview-badge">Preview</span></button>
       </div>
     `;
+    const isAsr = isTwoSiteAsrActive();
     const s1Active = !hvReplicationOn && !site1Offline;
-    const s2Active = hvReplicationOn && !site1Offline;
-    const s3Active = site1Offline;
+    const failingOver = site1Offline && twoSiteDrBusy;
+    const failingBack = !site1Offline && twoSiteDrBusy;
+    const s2Active = hvReplicationOn && !site1Offline && !twoSiteDrBusy;
+    const s3Active = site1Offline && !twoSiteDrBusy;
     stepsData = [
-      { num: '1', label: s1Active ? 'Start Replication' : 'Replicating to Site B', state: s1Active ? 'active' : 'done', attr: 'data-c1-hv="start"' },
-      { num: '2', label: s3Active ? 'Running on Site B' : 'Failover to Site B', state: s2Active ? 'active' : (s3Active ? 'done' : ''), attr: 'data-c1-hv="failover"' },
-      { num: '3', label: 'Failback to Site A', state: s3Active ? 'active' : '', attr: 'data-c1-hv="failback"' }
+      { num: '1', label: s1Active ? (isAsr ? 'Start ASR Replication' : 'Start Replication') : 'Replicating to Site B', state: s1Active ? 'active' : 'done', attr: 'data-c1-hv="start"' },
+      { num: '2', label: failingOver ? 'Failing over to Site B' : (site1Offline || failingBack ? 'Running on Site B' : 'Failover to Site B'), state: s2Active || failingOver ? 'active' : (site1Offline || failingBack ? 'done' : ''), attr: 'data-c1-hv="failover"' },
+      { num: '3', label: failingBack ? 'Failing back to Site 1' : 'Failback to Site 1', state: s3Active || failingBack ? 'active' : '', attr: 'data-c1-hv="failback"' }
     ];
-    if (s1Active) nextActionLabel = '▶ Next: Start Replication';
+    if (failingOver) nextActionLabel = '⏳ Failing over to Site B...';
+    else if (failingBack) nextActionLabel = '⏳ Failing back to Site 1...';
+    else if (s1Active) nextActionLabel = isAsr ? '▶ Next: Start ASR Replication' : '▶ Next: Start Replication';
     else if (s2Active) nextActionLabel = '▶ Next: Failover to Site B';
-    else nextActionLabel = '▶ Next: Failback to Site A';
+    else nextActionLabel = '▶ Next: Failback to Site 1';
     nextActionCmd = 'hv-next';
     canPlayAll = true;
   } else if (scenario === 'rack-aware') {
@@ -1112,6 +1487,18 @@ function renderScenarioControlBar() {
     else nextActionLabel = '↺ Replay Policy Demo';
     nextActionCmd = 'pol-next';
     canPlayAll = true;
+  } else if (scenario === 'confidential-computing') {
+    stepsData = [
+      { num: '1', label: confidentialStep === 0 ? 'Deploy Confidential VM' : 'CVM Running On-Premises', state: confidentialStep === 0 ? 'active' : 'done', attr: 'data-c1-cvm="deploy"' },
+      { num: '2', label: confidentialStep < 2 ? 'Verify with Azure Attestation' : 'Hardware Evidence Verified', state: confidentialStep === 1 ? 'active' : (confidentialStep >= 2 ? 'done' : ''), attr: 'data-c1-cvm="attest"' },
+      { num: '3', label: confidentialStep < 3 ? 'Release Key from Key Vault' : 'Policy-Gated Key Release', state: confidentialStep === 2 ? 'active' : (confidentialStep >= 3 ? 'done' : ''), attr: 'data-c1-cvm="release"' },
+      { num: '4', label: 'Reject Mismatched Claim', state: confidentialStep === 3 ? 'active' : (confidentialStep >= 4 ? 'done' : ''), attr: 'data-c1-cvm="deny"' }
+    ];
+    nextActionLabel = confidentialBusy
+      ? '⏳ Verifying trust chain...'
+      : (confidentialStep >= 4 ? '↺ Replay Confidential VM Demo' : `▶ Next: ${['Deploy Confidential VM', 'Attest Platform', 'Release Key', 'Reject Mismatched Claim'][confidentialStep]}`);
+    nextActionCmd = 'cvm-next';
+    canPlayAll = true;
   }
 
   const stepperNodesHtml = stepsData.map((st, idx) => {
@@ -1120,7 +1507,7 @@ function renderScenarioControlBar() {
       : '';
     const checkOrNum = st.state === 'done' ? '✓' : st.num;
     return `
-      <button type="button" class="c1-step-box ${st.state}" ${st.attr} ${aumBusy ? 'disabled' : ''}>
+      <button type="button" class="c1-step-box ${st.state}" ${st.attr} ${controlsDisabled ? 'disabled' : ''}>
         <span class="c1-step-num">${checkOrNum}</span>
         <span class="c1-step-label">${st.label}</span>
       </button>
@@ -1133,13 +1520,13 @@ function renderScenarioControlBar() {
     : '';
 
   const nextBtnHtml = nextActionLabel
-    ? `<button type="button" class="c1-next-step-btn" data-c1-next-action="${nextActionCmd}" ${aumBusy ? 'disabled' : ''}>
+    ? `<button type="button" class="c1-next-step-btn" data-c1-next-action="${nextActionCmd}" ${controlsDisabled ? 'disabled' : ''}>
         ${nextActionLabel}
       </button>`
     : '';
 
   const playAllBtnHtml = canPlayAll
-    ? `<button type="button" class="c1-playall-btn ${demoAutoPlayActive || aumBusy ? 'playing' : ''}" data-c1-play-all="true" ${aumBusy ? 'disabled' : ''}>
+    ? `<button type="button" class="c1-playall-btn ${demoAutoPlayActive || aumBusy || confidentialBusy ? 'playing' : ''}" data-c1-play-all="true" ${controlsDisabled && !(scenario === 'hvreplica' && demoAutoPlayActive) ? 'disabled' : ''}>
         ${demoAutoPlayActive ? '⏹ Stop' : '⏵⏵ Play All'}
       </button>`
     : '';
@@ -1254,15 +1641,9 @@ function renderScenarioControlBar() {
     } else if (scenario === 'asr') {
       triggerAsrFailoverToggle();
     } else if (scenario === 'hvreplica') {
+      if (twoSiteDrBusy) return;
       if (!hvReplicationOn && !site1Offline) {
-        hvReplicationOn = true;
-        renderHvSite2StandbyState();
-        renderScenarioControlBar();
-        showToast(
-          'Hyper-V Replica Started (Site 1 → Site B)',
-          `VMs in Site 1 are now asynchronously replicating across to your ${hvSite2Nodes}-node Site B cluster.`,
-          'icons/azure-local.svg'
-        );
+        startTwoSiteHypervReplication();
       } else {
         triggerHvReplicaFailoverToggle();
       }
@@ -1286,6 +1667,12 @@ function renderScenarioControlBar() {
       } else {
         initPolicyScenario();
         renderScenarioControlBar();
+      }
+    } else if (scenario === 'confidential-computing') {
+      if (confidentialStep >= 4) {
+        selectScenario('confidential-computing');
+      } else {
+        advanceConfidentialStep();
       }
     }
   }
@@ -1316,21 +1703,32 @@ function renderScenarioControlBar() {
       }
 
       stopDemoAutoPlay();
+      if (scenario === 'confidential-computing') {
+        selectScenario('confidential-computing');
+        demoAutoPlayActive = true;
+        renderScenarioControlBar();
+        scheduleConfidentialSteps([300, 3200, 6700, 10200]);
+        return;
+      }
       demoAutoPlayActive = true;
 
       // Reset current scenario to Step 1 and play through all steps automatically
       const scheduleSteps = (delays) => {
         renderScenarioControlBar();
         delays.forEach((ms, idx) => {
-          const t = setTimeout(() => {
+          const runStep = () => {
             if (!demoAutoPlayActive) return;
+            if (scenario === 'hvreplica' && twoSiteDrBusy) {
+              demoAutoPlayTimers.push(setTimeout(runStep, 100));
+              return;
+            }
             triggerNextScenarioStep();
             if (idx === delays.length - 1) {
               demoAutoPlayActive = false;
               renderScenarioControlBar();
             }
-          }, ms);
-          demoAutoPlayTimers.push(t);
+          };
+          demoAutoPlayTimers.push(setTimeout(runStep, ms));
         });
       };
 
@@ -1346,9 +1744,7 @@ function renderScenarioControlBar() {
         if (site1Offline) triggerAsrFailoverToggle();
         scheduleSteps([400, 3800]);
       } else if (scenario === 'hvreplica') {
-        if (site1Offline) triggerHvReplicaFailoverToggle();
-        hvReplicationOn = false;
-        scheduleSteps([250, 2600, 5600]);
+        if (resetTwoSiteDrWalkthrough()) scheduleSteps([250, 2600, 5600]);
       } else if (scenario === 'rack-aware') {
         if (site1Offline) triggerRackAwareZoneFailoverToggle();
         scheduleSteps([400, 3600]);
@@ -1403,32 +1799,24 @@ function renderScenarioControlBar() {
     });
   });
 
-  // 2nd Site DR (Hyper-V Replica) step handlers
+  // 2nd Site DR step handlers
   scenarioQuickStrip.querySelectorAll('[data-s2-count]').forEach(chip => {
     chip.addEventListener('click', () => {
-      if (site1Offline) {
-        showToast('Failback First', 'Fail back VMs to Site 1 before resizing Site B hardware.', 'icons/azure-local.svg');
-        return;
-      }
-      hvSite2Nodes = Number(chip.getAttribute('data-s2-count'));
-      buildHvReplicaSite2Cluster();
-      renderScenarioControlBar();
-      setTimeout(resizeCanvas, 150);
+      resizeTwoSiteNodes(Number(chip.getAttribute('data-s2-count')));
     });
+  });
+
+  scenarioQuickStrip.querySelectorAll('[data-two-site-method]').forEach(button => {
+    button.addEventListener('click', () => selectTwoSiteDrMethod(button.getAttribute('data-two-site-method')));
   });
 
   scenarioQuickStrip.querySelectorAll('[data-c1-hv]').forEach(btn => {
     btn.addEventListener('click', () => {
+      if (twoSiteDrBusy) return;
+      stopDemoAutoPlay();
       const action = btn.getAttribute('data-c1-hv');
       if (action === 'start') {
-        hvReplicationOn = true;
-        renderHvSite2StandbyState();
-        renderScenarioControlBar();
-        showToast(
-          'Hyper-V Replica Started (Site 1 → Site B)',
-          `VMs in Site 1 are now asynchronously replicating across to your ${hvSite2Nodes}-node Site B cluster.`,
-          'icons/azure-local.svg'
-        );
+        startTwoSiteHypervReplication();
       } else if (action === 'failover' && !site1Offline) {
         if (!hvReplicationOn) {
           hvReplicationOn = true;
@@ -1503,6 +1891,13 @@ function renderScenarioControlBar() {
     });
   });
 
+  scenarioQuickStrip.querySelectorAll('[data-c1-cvm]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const expectedStep = { deploy: 0, attest: 1, release: 2, deny: 3 }[btn.getAttribute('data-c1-cvm')];
+      if (expectedStep === confidentialStep && !confidentialBusy) advanceConfidentialStep();
+    });
+  });
+
   // =========================================================================
   // OPTION 5: TOP-RIGHT HEADER SCENARIOS DROPDOWN + SKYWAY GAP STEP BAR
   // =========================================================================
@@ -1515,16 +1910,17 @@ function renderScenarioControlBar() {
     'node-failure': 'Node Failure (HA)',
     'asr': 'Cloud DR (ASR)',
     'hvreplica': '2nd Site DR',
-    'rack-aware': 'Rack-Aware',
+    'rack-aware': 'Rack Aware Cluster',
     'update-manager': 'Updates',
-    'policy': 'Azure Policy'
+    'policy': 'Azure Policy',
+    'confidential-computing': 'Confidential VM'
   };
 
   if (headerScenariosPicker) {
     const popoverHtml = c1DrawerOpen ? `
       <div class="scn-popover-menu">
         ${SCENARIO_CATALOG.map(s => `
-          <button type="button" class="pop-scn-item ${s.id === scenario ? 'active' : ''}" data-opt5-scn="${s.id}">
+          <button type="button" class="pop-scn-item ${s.id === scenario ? 'active' : ''}" data-opt5-scn="${s.id}" ${s.id === 'confidential-computing' && (mode === 'disconnected' || cableCut) ? 'disabled title="Requires an active connection to Azure Attestation and Key Vault"' : ''}>
             ${s.iconHtml}
             <div>
               <strong>${s.shortLabel}</strong>
@@ -1575,7 +1971,7 @@ function renderScenarioControlBar() {
         const lbl = b.querySelector('.c1-step-label')?.textContent || '';
         const num = b.querySelector('.c1-step-num')?.textContent || (i + 1);
         return `
-          <button type="button" class="m-step-pill ${state}" data-opt5-step="${i}" ${aumBusy ? 'disabled' : ''}>
+          <button type="button" class="m-step-pill ${state}" data-opt5-step="${i}" ${b.disabled ? 'disabled' : ''}>
             <span class="m-step-num">${num}</span>
             <span>${lbl}</span>
           </button>
@@ -1586,8 +1982,8 @@ function renderScenarioControlBar() {
         <strong style="font-size:0.75rem; color:#0284c7;">${currentMeta.shortLabel}:</strong>
         ${extraChipsHtml}
         ${stepsHtml}
-        ${nextBtnOrig ? `<button type="button" class="m-next-btn" id="opt5NextProxy" ${aumBusy ? 'disabled' : ''}>${nextBtnOrig.textContent.trim()}</button>` : ''}
-        ${playAllOrig ? `<button type="button" class="m-playall-btn" id="opt5PlayAllProxy" ${aumBusy ? 'disabled' : ''}>${playAllOrig.textContent.trim()}</button>` : ''}
+        ${nextBtnOrig ? `<button type="button" class="m-next-btn" id="opt5NextProxy" ${nextBtnOrig.disabled ? 'disabled' : ''}>${nextBtnOrig.textContent.trim()}</button>` : ''}
+        ${playAllOrig ? `<button type="button" class="m-playall-btn" id="opt5PlayAllProxy" ${playAllOrig.disabled ? 'disabled' : ''}>${playAllOrig.textContent.trim()}</button>` : ''}
         <button type="button" class="m-clear-btn" id="opt5ClearProxy">✕ Clear</button>
       `;
 
@@ -1610,15 +2006,11 @@ function renderScenarioControlBar() {
       // Wire Site B node count & Rack-Aware zone chips inside the Skyway bar
       skywayScenarioStepBar.querySelectorAll('[data-s2-count]').forEach(chip => {
         chip.addEventListener('click', () => {
-          if (site1Offline) {
-            showToast('Failback First', 'Fail back VMs to Site 1 before resizing Site B hardware.', 'icons/azure-local.svg');
-            return;
-          }
-          hvSite2Nodes = Number(chip.getAttribute('data-s2-count'));
-          buildHvReplicaSite2Cluster();
-          renderScenarioControlBar();
-          setTimeout(resizeCanvas, 150);
+          resizeTwoSiteNodes(Number(chip.getAttribute('data-s2-count')));
         });
+      });
+      skywayScenarioStepBar.querySelectorAll('[data-two-site-method]').forEach(button => {
+        button.addEventListener('click', () => selectTwoSiteDrMethod(button.getAttribute('data-two-site-method')));
       });
       skywayScenarioStepBar.querySelectorAll('[data-ra-count]').forEach(chip => {
         chip.addEventListener('click', () => {
@@ -1650,7 +2042,7 @@ document.addEventListener('click', () => {
 function toggleSingleNodeFailure(col) {
   const isOffline = col.classList.contains('offline');
   const pwrText = col.querySelector('.pwr-text');
-  const box = col.querySelector('.node-workloads');
+  const box = getWorkloadBox(col);
   const nodeLabel = col.querySelector('.node-id-label').textContent;
 
   if (!isOffline) {
@@ -1665,15 +2057,40 @@ function toggleSingleNodeFailure(col) {
     }
 
     col.classList.add('offline');
+    box?.classList.add('offline-lane');
     pwrText.textContent = 'FAILED';
 
-    const pills = Array.from(box.children);
+    const remainingOnlineCols = Array.from(primaryNodesRow.querySelectorAll('.node-column:not(.offline)'));
+    const survivingWorkers = remainingOnlineCols.flatMap(c =>
+      Array.from(getWorkloadBox(c)?.querySelectorAll('.vm-pill.aks[data-workload-kind="aks-node"]') || [])
+    );
+
+    const pills = box ? Array.from(box.children) : [];
+    let rescheduledPodTotal = 0;
+    pills.forEach(pill => {
+      if (!pill._haHomeSlot) {
+        pill._haHomeSlot = box;
+      }
+      if (pill.dataset.workloadKind === 'aks-node') {
+        const lostPods = getWorkerPodCount(pill);
+        if (lostPods > 0 && survivingWorkers.length > 0) {
+          rescheduledPodTotal += lostPods;
+          setWorkerPodCount(pill, 0);
+          for (let k = 0; k < lostPods; k++) {
+            survivingWorkers.sort((a, b) => getWorkerPodCount(a) - getWorkerPodCount(b));
+            setWorkerPodCount(survivingWorkers[0], getWorkerPodCount(survivingWorkers[0]) + 1, { boosted: true });
+          }
+        }
+      }
+    });
+
     pills.forEach((pill, idx) => {
       setTimeout(() => {
         const survivors = Array.from(primaryNodesRow.querySelectorAll('.node-column:not(.offline)'));
-        survivors.sort((a, b) => a.querySelector('.node-workloads').children.length - b.querySelector('.node-workloads').children.length);
-        if (survivors[0]) {
-          flyWorkloadPill(pill, survivors[0].querySelector('.node-workloads'), true);
+        survivors.sort((a, b) => (getWorkloadBox(a)?.children.length || 0) - (getWorkloadBox(b)?.children.length || 0));
+        const destBox = getWorkloadBox(survivors[0]);
+        if (destBox) {
+          flyWorkloadPill(pill, destBox, true);
           updateContainerLoads(primaryNodesRow);
         }
       }, idx * 200);
@@ -1683,26 +2100,43 @@ function toggleSingleNodeFailure(col) {
     renderScenarioControlBar();
     showToast(
       `${nodeLabel} Crashed — Automatic HA Restart!`,
-      `Shared NVMe storage preserved every disk, and ${nodeLabel}'s VMs & AKS nodes automatically restarted onto healthy servers.`,
+      rescheduledPodTotal > 0
+        ? `Kubernetes rescheduled ${rescheduledPodTotal} pods onto healthy AKS workers while Failover Clustering restarted ${nodeLabel}'s VMs & AKS worker onto surviving servers.`
+        : `Shared storage preserved every disk, and ${nodeLabel}'s VMs automatically restarted onto healthy servers.`,
       'icons/vm.svg'
     );
   } else {
     col.classList.remove('offline');
+    box?.classList.remove('offline-lane');
     pwrText.textContent = 'ONLINE';
 
-    const donors = Array.from(primaryNodesRow.querySelectorAll('.node-column:not(.offline)'))
-      .filter(c => c !== col && c.querySelector('.node-workloads').children.length >= 3)
-      .sort((a, b) => b.querySelector('.node-workloads').children.length - a.querySelector('.node-workloads').children.length);
+    const homePills = Array.from(primaryWorkloadsRow.querySelectorAll('.vm-pill'))
+      .filter(pill => pill._haHomeSlot === box && pill.parentElement !== box);
 
-    donors.slice(0, 2).forEach((donor, idx) => {
-      const pill = donor.querySelector('.node-workloads').lastElementChild;
-      if (pill) {
+    if (homePills.length > 0) {
+      homePills.forEach((pill, idx) => {
         setTimeout(() => {
-          flyWorkloadPill(pill, box, false);
-          updateContainerLoads(primaryNodesRow);
+          if (box) {
+            flyWorkloadPill(pill, box, false);
+            updateContainerLoads(primaryNodesRow);
+          }
         }, idx * 160);
-      }
-    });
+      });
+    } else {
+      const donors = Array.from(primaryNodesRow.querySelectorAll('.node-column:not(.offline)'))
+        .filter(c => c !== col && (getWorkloadBox(c)?.children.length || 0) >= 3)
+        .sort((a, b) => (getWorkloadBox(b)?.children.length || 0) - (getWorkloadBox(a)?.children.length || 0));
+
+      donors.slice(0, 2).forEach((donor, idx) => {
+        const pill = getWorkloadBox(donor)?.lastElementChild;
+        if (pill && box) {
+          setTimeout(() => {
+            flyWorkloadPill(pill, box, false);
+            updateContainerLoads(primaryNodesRow);
+          }, idx * 160);
+        }
+      });
+    }
 
     updateContainerLoads(primaryNodesRow);
     renderScenarioControlBar();
@@ -1713,9 +2147,74 @@ function setPrimarySiteDownVisual(isDown, statusWord = 'SITE DOWN') {
   datacenterBox.classList.toggle('site-outage', isDown);
   Array.from(primaryNodesRow.querySelectorAll('.node-column')).forEach(col => {
     col.classList.toggle('offline', isDown);
+    getWorkloadBox(col)?.classList.toggle('offline-lane', isDown);
     col.querySelector('.pwr-text').textContent = isDown ? statusWord : 'ONLINE';
   });
   updateContainerLoads(primaryNodesRow);
+}
+
+function moveTwoSiteWorkloads(records, targetForRecord, onComplete) {
+  const runId = ++twoSiteDrRunId;
+  twoSiteDrBusy = true;
+  records.forEach((record, index) => {
+    setTimeout(() => {
+      if (runId !== twoSiteDrRunId || scenario !== 'hvreplica' || !evacuatedRecords.includes(record)) return;
+      const target = targetForRecord(record, index);
+      if (!record.pill.isConnected || !target || !target.isConnected) {
+        stopDemoAutoPlay();
+        const restored = resetTwoSiteDrWalkthrough();
+        if (restored) {
+          showToast('Workload Move Interrupted', 'The recovery destination is no longer available. The walkthrough was reset.', 'icons/azure-local.svg');
+        }
+        return;
+      }
+      flyWorkloadPill(record.pill, target, true);
+      updateContainerLoads(primaryNodesRow);
+      updateContainerLoads(secondaryNodesRow);
+    }, index * 170);
+  });
+  const finishDelay = records.length ? (records.length - 1) * 170 + 1450 : 0;
+  setTimeout(() => {
+    if (runId !== twoSiteDrRunId || scenario !== 'hvreplica') return;
+    twoSiteDrBusy = false;
+    if (onComplete) onComplete();
+    syncTwoSitePresentation();
+    renderScenarioControlBar();
+  }, finishDelay);
+  syncTwoSitePresentation();
+  renderScenarioControlBar();
+}
+
+function resetTwoSiteDrWalkthrough() {
+  twoSiteDrRunId += 1;
+  twoSiteDrBusy = false;
+  const strandedRecords = [];
+  evacuatedRecords.forEach(record => {
+    const homeBox = record.homeBox.isConnected ? record.homeBox : primaryWorkloadsRow.querySelector('.node-workloads');
+    if (!homeBox) {
+      strandedRecords.push(record);
+      return;
+    }
+    record.pill.getAnimations().forEach(animation => animation.cancel());
+    record.pill.classList.remove('restarting');
+    const label = record.pill.querySelector('.pill-name');
+    if (label) label.textContent = record.pill.dataset.vmName;
+    homeBox.appendChild(record.pill);
+  });
+  evacuatedRecords = strandedRecords;
+  hvReplicationOn = false;
+  site1Offline = false;
+  setPrimarySiteDownVisual(false);
+  syncTwoSitePresentation();
+  renderHvSite2StandbyState();
+  renderScenarioControlBar();
+  if (strandedRecords.length) {
+    stopDemoAutoPlay();
+    renderScenarioControlBar();
+    showToast('Walkthrough Interrupted', 'Some workloads could not return to Site 1. Clear the scenario to rebuild it.', 'icons/azure-local.svg');
+    return false;
+  }
+  return true;
 }
 
 // 2. Azure Site Recovery (Site 1 -> Azure Cloud)
@@ -1723,7 +2222,7 @@ function triggerAsrFailoverToggle() {
   if (!site1Offline) {
     site1Offline = true;
     evacuatedRecords = [];
-    Array.from(primaryNodesRow.querySelectorAll('.vm-pill[data-replicable="true"]')).forEach(pill => {
+    Array.from(primaryWorkloadsRow.querySelectorAll('.vm-pill[data-replicable="true"]')).forEach(pill => {
       evacuatedRecords.push({ pill, homeBox: pill.parentElement });
     });
 
@@ -1752,7 +2251,7 @@ function triggerAsrFailoverToggle() {
     });
     evacuatedRecords = [];
     asrStandbyHint.style.display = '';
-    asrStatusSub.textContent = 'Continuous VM replication active (30s RPO) · Standing by in Azure';
+    asrStatusSub.textContent = 'VM disks replicating to Azure Storage · RPO as low as 30s';
     renderScenarioControlBar();
     showToast(
       'Failback to Site 1 Complete',
@@ -1762,71 +2261,91 @@ function triggerAsrFailoverToggle() {
   }
 }
 
-// 3. Hyper-V Replica Failover (Site 1 -> Customizable Site B)
+// 3. 2nd Site DR Failover (Site 1 -> Customizable Site B via Hyper-V Replica or ASR Preview)
 function triggerHvReplicaFailoverToggle() {
+  if (scenario !== 'hvreplica' || twoSiteDrBusy) return;
+  const isAsr = isTwoSiteAsrActive();
   if (!site1Offline) {
     if (!hvReplicationOn) {
       hvReplicationOn = true;
     }
     site1Offline = true;
     evacuatedRecords = [];
-    Array.from(primaryNodesRow.querySelectorAll('.vm-pill[data-replicable="true"]')).forEach(pill => {
+    Array.from(primaryWorkloadsRow.querySelectorAll('.vm-pill[data-replicable="true"]')).forEach(pill => {
       evacuatedRecords.push({ pill, homeBox: pill.parentElement });
     });
 
     setPrimarySiteDownVisual(true, 'SITE OFFLINE');
+    if (isAsr) sendTwoSiteAsrControlBurst([arcBridgeBadge2]);
 
     const site2Cols = Array.from(secondaryNodesRow.children);
     site2Cols.forEach(c => {
-      c.querySelector('.node-workloads').innerHTML = '';
+      getWorkloadBox(c)?.querySelectorAll('.ghost-replica-pill, .idle-slot-hint').forEach(element => element.remove());
       c.querySelector('.pwr-text').textContent = 'LIVE · DR';
     });
 
-    evacuatedRecords.forEach((rec, idx) => {
-      const targetBox = site2Cols[idx % site2Cols.length].querySelector('.node-workloads');
-      setTimeout(() => {
-        flyWorkloadPill(rec.pill, targetBox, true);
-        updateContainerLoads(secondaryNodesRow);
-      }, idx * 170);
-    });
-
-    secondaryClusterSub.textContent = '● FAILOVER ACTIVE — Site 1 VMs are now running live on Site B!';
-    renderScenarioControlBar();
-    showToast(
-      'Failed Over to Site B (Hyper-V Replica)!',
-      `Site 1 went offline — your replicated VMs booted across Site B's ${hvSite2Nodes}-node Azure Local cluster.`,
-      'icons/azure-local.svg'
-    );
+    secondaryClusterSub.textContent = isAsr
+      ? '● ASR FAILOVER ACTIVE — Replicated SAN VMs are now running live on Site B!'
+      : '● FAILOVER ACTIVE — Site 1 VMs are now running live on Site B!';
+    moveTwoSiteWorkloads(evacuatedRecords, (_, index) =>
+      getWorkloadBox(site2Cols[index % site2Cols.length]), () => {
+        if (isAsr) {
+          showToast(
+            'Failed Over to Site B (ASR Preview)!',
+            `Azure Site Recovery orchestrated failover of your SAN-backed VMs directly onto Site B's ${hvSite2Nodes}-node cluster.`,
+            'icons/asr.svg'
+          );
+        } else {
+          showToast(
+            'Failed Over to Site B (Hyper-V Replica)!',
+            `Replicated VMs booted on Site B's ${hvSite2Nodes}-node cluster. Register and reconnect them for Azure management if needed.`,
+            'icons/azure-local.svg'
+          );
+        }
+      });
   } else {
     site1Offline = false;
     setPrimarySiteDownVisual(false);
+    if (isAsr) sendTwoSiteAsrControlBurst([arcBridgeBadge]);
 
-    evacuatedRecords.forEach((rec, idx) => {
-      setTimeout(() => {
-        flyWorkloadPill(rec.pill, rec.homeBox, true);
-        updateContainerLoads(primaryNodesRow);
-        if (idx === evacuatedRecords.length - 1) {
-          setTimeout(renderHvSite2StandbyState, 350);
-        }
-      }, idx * 150);
+    moveTwoSiteWorkloads([...evacuatedRecords], record => record.homeBox, () => {
+      evacuatedRecords = [];
+      renderHvSite2StandbyState();
+      if (isAsr) {
+        showToast(
+          'ASR Failback to Site 1 Complete (Preview)',
+          'Site 1 is online again — Azure Site Recovery failed VMs back to Site 1 and resumed SAN-to-SAN replication to Site B.',
+          'icons/asr.svg'
+        );
+      } else {
+        showToast(
+          'Planned Failback to Site 1 Complete',
+          'Site 1 is online again — VMs failed back and resumed Hyper-V Replica protection to Site B.',
+          'icons/azure-local.svg'
+        );
+      }
     });
-    evacuatedRecords = [];
-    renderScenarioControlBar();
-    showToast(
-      'Planned Failback to Site 1 Complete',
-      'Site 1 is online again — VMs failed back and resumed Hyper-V Replica protection to Site B.',
-      'icons/azure-local.svg'
-    );
   }
 }
 
-// 4. Rack-Aware Cluster Zone 1 Offline -> Automatic Zero-RPO HA Restart in Zone 2!
+// 4. Rack Aware Cluster Zone 1 Offline -> Automatic Zero RPO HA Restart in Zone 2!
 function triggerRackAwareZoneFailoverToggle() {
   if (!site1Offline) {
     site1Offline = true;
     evacuatedRecords = [];
-    // In a Rack-Aware stretched cluster with synchronous S2D storage, ALL VMs & AKS nodes in Zone 1 auto-restart in Zone 2!
-    Array.from(primaryNodesRow.querySelectorAll('.vm-pill')).forEach(pill => {
+    const zone2Workers = Array.from(secondaryWorkloadsRow.querySelectorAll('.vm-pill.aks[data-workload-kind="aks-node"]'));
+    // In a Rack Aware cluster with synchronous storage, ALL VMs & AKS nodes in Zone 1 auto-restart in Zone 2!
+    Array.from(primaryWorkloadsRow.querySelectorAll('.vm-pill')).forEach(pill => {
+      if (pill.dataset.workloadKind === 'aks-node' && zone2Workers.length > 0) {
+        const lostPods = getWorkerPodCount(pill);
+        if (lostPods > 0) {
+          setWorkerPodCount(pill, 0);
+          for (let k = 0; k < lostPods; k++) {
+            zone2Workers.sort((a, b) => getWorkerPodCount(a) - getWorkerPodCount(b));
+            setWorkerPodCount(zone2Workers[0], getWorkerPodCount(zone2Workers[0]) + 1, { boosted: true });
+          }
+        }
+      }
       evacuatedRecords.push({ pill, homeBox: pill.parentElement });
     });
 
@@ -1835,10 +2354,12 @@ function triggerRackAwareZoneFailoverToggle() {
 
     const z2Cols = Array.from(secondaryNodesRow.children);
     evacuatedRecords.forEach((rec, idx) => {
-      const targetBox = z2Cols[idx % z2Cols.length].querySelector('.node-workloads');
+      const targetBox = getWorkloadBox(z2Cols[idx % z2Cols.length]);
       setTimeout(() => {
-        flyWorkloadPill(rec.pill, targetBox, true);
-        updateContainerLoads(secondaryNodesRow);
+        if (targetBox) {
+          flyWorkloadPill(rec.pill, targetBox, true);
+          updateContainerLoads(secondaryNodesRow);
+        }
       }, idx * 170);
     });
 
@@ -1846,7 +2367,7 @@ function triggerRackAwareZoneFailoverToggle() {
     renderScenarioControlBar();
     const isSanRa = site1StorageMode === 'san';
     showToast(
-      'Zone 1 Offline — Automatic Stretched Cluster Failover!',
+      'Zone 1 Offline · Automatic Rack Aware Cluster Failover!',
       isSanRa
         ? 'Because Site 1 & Site 2 share synchronous SAN storage (< 5 ms latency), all Zone 1 VMs & AKS nodes automatically restarted in Zone 2 with zero data loss!'
         : 'Because Site 1 & Site 2 share one synchronous Storage Spaces Direct pool (< 1 ms RDMA), all Zone 1 VMs & AKS nodes automatically restarted in Zone 2 with zero data loss!',
@@ -1855,7 +2376,7 @@ function triggerRackAwareZoneFailoverToggle() {
   } else {
     site1Offline = false;
     setPrimarySiteDownVisual(false);
-    primaryClusterBadge.textContent = '● High-Availability Cluster Active';
+    primaryClusterBadge.textContent = '● High Availability Cluster Active';
     secondaryClusterSub.textContent = 'Local Availability Zone 2';
 
     evacuatedRecords.forEach((rec, idx) => {
@@ -1869,7 +2390,7 @@ function triggerRackAwareZoneFailoverToggle() {
     renderScenarioControlBar();
     showToast(
       'Zone 1 Recovered & Rebalanced',
-      'Site 1 (Availability Zone 1) rejoined the stretched cluster and rebalanced active workloads.',
+      'Site 1 (Availability Zone 1) rejoined the Rack Aware cluster and rebalanced active workloads.',
       'icons/azure-local.svg'
     );
   }
@@ -1939,7 +2460,7 @@ function patchSingleClusterNode(nodeIdx, onDoneCallback) {
   const nodeLabel = `Node ${nodeIdx + 1}`;
   const pwrText = col.querySelector('.pwr-text');
   const verBadge = col.querySelector('.node-version-badge');
-  const box = col.querySelector('.node-workloads');
+  const box = getWorkloadBox(col);
 
   // Download the update package once from Azure via the existing link; subsequent nodes patch directly from the staged package!
   downloadClusterUpdateOnce(() => {
@@ -1950,16 +2471,18 @@ function patchSingleClusterNode(nodeIdx, onDoneCallback) {
     primaryClusterBadge.textContent = `🔄 CAU Draining ${nodeLabel}: Live-migrating VMs to peer nodes (0 Downtime)...`;
 
     const pillsToReturn = [];
-    const pills = Array.from(box.children);
+    const pills = box ? Array.from(box.children) : [];
     const peers = cols.filter((_, idx) => idx !== nodeIdx);
 
     pills.forEach((pill, i) => {
       const peerCol = peers[(nodeIdx + i) % peers.length];
-      const targetBox = peerCol.querySelector('.node-workloads');
+      const targetBox = getWorkloadBox(peerCol);
       pillsToReturn.push({ pill, homeBox: box });
       const tMig = setTimeout(() => {
-        flyWorkloadPill(pill, targetBox, false, 2100);
-        updateContainerLoads(primaryNodesRow);
+        if (targetBox) {
+          flyWorkloadPill(pill, targetBox, false, 2100);
+          updateContainerLoads(primaryNodesRow);
+        }
       }, 350 + i * 750);
       aumAutoTimers.push(tMig);
     });
@@ -2094,7 +2617,7 @@ function runPolicyAuditScan() {
   policyStep = 'audited';
 
   // Remove any leftover test VM
-  primaryNodesRow.querySelectorAll('.vm-pill.policy-test-vm').forEach(el => el.remove());
+  primaryWorkloadsRow.querySelectorAll('.vm-pill.policy-test-vm').forEach(el => el.remove());
 
   // Flag 1 Public Cloud VM (Cloud-SQL-VM-01) and 2 On-Premises VMs as Guest OS Baseline Drift
   const cloudSqlCard = document.querySelector('[data-policy-target="cloud-sql-1"]');
@@ -2104,7 +2627,7 @@ function runPolicyAuditScan() {
   if (cloudSqlCard) setWorkloadPolicyChip(cloudSqlCard, 'noncompliant', '⚠ TLS 1.0 Enabled');
   if (cloudAksCard) setWorkloadPolicyChip(cloudAksCard, 'compliant', '✓ OS Hardened');
 
-  const pills = Array.from(primaryNodesRow.querySelectorAll('.vm-pill'));
+  const pills = Array.from(primaryWorkloadsRow.querySelectorAll('.vm-pill'));
   pills.forEach(pill => {
     const nameEl = pill.querySelector('.pill-name');
     const name = (pill.dataset.vmName || (nameEl ? nameEl.textContent : '')).trim();
@@ -2153,7 +2676,7 @@ function runPolicyAutoRemediation() {
   }
 
   const flaggedLocalPills = [];
-  Array.from(primaryNodesRow.querySelectorAll('.vm-pill')).forEach(pill => {
+  Array.from(primaryWorkloadsRow.querySelectorAll('.vm-pill')).forEach(pill => {
     const chip = pill.querySelector('.pol-chip');
     if (chip && chip.classList.contains('noncompliant')) {
       flaggedLocalPills.push(pill);
@@ -2189,10 +2712,11 @@ function simulatePolicyBlockedDeploy() {
 
   const cols = Array.from(primaryNodesRow.querySelectorAll('.node-column'));
   if (!cols.length) return;
-  const targetBox = cols[0].querySelector('.node-workloads');
+  const targetBox = getWorkloadBox(cols[0]);
+  if (!targetBox) return;
 
   // Remove any previous test VM pill first
-  primaryNodesRow.querySelectorAll('.vm-pill.policy-test-vm').forEach(el => el.remove());
+  primaryWorkloadsRow.querySelectorAll('.vm-pill.policy-test-vm').forEach(el => el.remove());
 
   const policyOrb = (mode === 'disconnected'
     ? document.getElementById('mgmtPolicyOrb')
@@ -2235,34 +2759,262 @@ function simulatePolicyBlockedDeploy() {
 }
 
 // ============================================================================
-// "+ CREATE LOCAL VM" BUTTON
+// WORKLOAD DEPLOYMENT CHOOSER & ILLUSTRATIVE PLACEMENT
 // ============================================================================
-function triggerDeployLocalVm(e) {
-  if (e) e.stopPropagation();
+const DEPLOYMENT_OPTIONS = [
+  { id: 'vm', title: 'Virtual Machine', icon: 'icons/vm.svg' },
+  { id: 'confidential-vm', title: 'Confidential VM', icon: 'icons/key-vault.svg' },
+  { id: 'aks-node', title: 'AKS worker node', icon: 'icons/aks.svg' },
+  { id: 'aks-pods', title: 'AKS application pods', icon: 'icons/aks.svg' },
+  { id: 'avd-host', title: 'AVD session host', icon: 'icons/avd.svg' }
+];
+
+let deploymentReturnFocus = null;
+
+function getDeploymentTargets() {
+  let rows = [primaryNodesRow];
+  if (scenario === 'rack-aware' || (scenario === 'hvreplica' && site1Offline)) {
+    rows = [secondaryNodesRow];
+    if (scenario === 'rack-aware') rows.unshift(primaryNodesRow);
+  }
+  return rows.flatMap(row => Array.from(row.querySelectorAll('.node-column:not(.offline)')).map(column => ({
+    column,
+    box: getWorkloadBox(column)
+  })).filter(item => Boolean(item.box)));
+}
+
+function getDeploymentAvailability(type) {
   if (mode === 'connected' && cableCut) {
-    showToast(
-      'Internet Paused',
-      'Existing VMs stay running up to 30 days! Restore internet or switch to Disconnected Mode to deploy new VMs.',
-      'icons/azure-arc.svg'
-    );
+    return { available: false, reason: 'The simulated Azure connection is interrupted. Restore the link before starting a new deployment.' };
+  }
+
+  if (type === 'vm') {
+    return {
+      available: true,
+      reason: mode === 'disconnected'
+        ? 'Disconnected VM deployment requires a locally prepared image and supported local networking; this simulation does not validate them.'
+        : 'Illustrative VM placement; image, network, and capacity checks are not performed.'
+    };
+  }
+
+  if (type === 'confidential-vm') {
+    if (mode === 'disconnected') {
+      return { available: false, reason: 'The documented Azure Local CVM attestation and secure key-release flow requires Azure connectivity.' };
+    }
+    if (scenario !== 'default' && scenario !== 'confidential-computing') {
+      return { available: false, reason: 'Return to Single-Site Overview to deploy a CVM, or use the Confidential Computing scenario.' };
+    }
+    if (scenario === 'confidential-computing' && primaryWorkloadsRow?.querySelector('.vm-pill.confidential-vm')) {
+      return { available: false, reason: 'The scenario already has a CVM; use its guided steps to continue.' };
+    }
+    return { available: true, reason: 'Assumes validated CVM-capable AMD SEV-SNP hardware and a prepared integrity-protected image.' };
+  }
+
+  if (type === 'aks-node' || type === 'aks-pods') {
+    if (scenario !== 'default') {
+      return { available: false, reason: 'AKS scale-out is modelled on the Single-Site Overview stage only.' };
+    }
+    if (type === 'aks-pods' && !primaryWorkloadsRow?.querySelector('.vm-pill.aks[data-workload-kind="aks-node"]')) {
+      return { available: false, reason: 'Deploy an AKS worker node first.' };
+    }
+    return {
+      available: true,
+      reason: type === 'aks-node'
+        ? 'Represents scaling the existing cluster. AKS availability sets use weak anti-affinity to distribute worker VMs across physical hosts.'
+        : 'Assumes a healthy existing AKS cluster and locally available images. Pod scheduling depends on capacity and declared topology constraints.'
+    };
+  }
+
+  if (type === 'avd-host') {
+    if (mode === 'disconnected') {
+      return { available: false, reason: 'AVD session hosts run locally, but the AVD brokering service requires a connection to Azure.' };
+    }
+    if (scenario !== 'default') {
+      return { available: false, reason: 'AVD session-host deployment is modelled on the Single-Site Overview stage only.' };
+    }
+    return { available: true, reason: 'The local VM is illustrative; host pool, workspace, identity, network, and licensing setup are not configured.' };
+  }
+
+  return { available: false, reason: 'This workload type is not available in the current simulation.' };
+}
+
+function renderDeploymentOptions() {
+  if (!deployOptionGrid) return;
+  deployOptionGrid.innerHTML = DEPLOYMENT_OPTIONS.map(option => {
+    const availability = getDeploymentAvailability(option.id);
+    return `
+      <button type="button" class="deployment-option" data-deployment-type="${option.id}" ${availability.available ? '' : 'aria-disabled="true"'} title="${availability.reason}" aria-label="${option.title}${availability.available ? '' : `, unavailable. ${availability.reason}`}"><img src="${option.icon}" alt="" /><span>${option.title}</span></button>
+    `;
+  }).join('');
+
+  deployOptionGrid.querySelectorAll('[data-deployment-type]').forEach(button => {
+    button.addEventListener('click', () => {
+      const type = button.dataset.deploymentType;
+      const availability = getDeploymentAvailability(type);
+      if (!availability.available) {
+        showToast('Workload Unavailable', availability.reason, 'icons/azure-arc.svg');
+      } else if (type === 'aks-pods') {
+        aksPodReplicaControls.hidden = false;
+        positionDeployChooser();
+        aksPodReplicaCount.focus();
+      } else {
+        closeDeployChooser();
+        deploySimulatedWorkload(type);
+      }
+    });
+  });
+}
+
+function positionDeployChooser() {
+  if (!deploymentReturnFocus || deployChooser.hidden) return;
+  const anchor = deploymentReturnFocus.getBoundingClientRect();
+  const menu = deployChooser.getBoundingClientRect();
+  const gap = 6;
+  const left = Math.max(8, Math.min(anchor.left, window.innerWidth - menu.width - 8));
+  const top = anchor.bottom + gap + menu.height <= window.innerHeight
+    ? anchor.bottom + gap
+    : Math.max(8, anchor.top - menu.height - gap);
+  deployChooser.style.left = `${left}px`;
+  deployChooser.style.top = `${top}px`;
+}
+
+function openDeployChooser(event) {
+  event?.stopPropagation();
+  if (!deployChooser) return;
+  if (!deployChooser.hidden && deploymentReturnFocus === event.currentTarget) {
+    closeDeployChooser();
     return;
   }
+  closeDeployChooser(false);
+  deploymentReturnFocus = event?.currentTarget || document.activeElement;
+  aksPodReplicaControls.hidden = true;
+  renderDeploymentOptions();
+  deployChooser.hidden = false;
+  deploymentReturnFocus.setAttribute('aria-expanded', 'true');
+  positionDeployChooser();
+  deployOptionGrid.querySelector('button')?.focus();
+}
 
-  // Pick least-loaded online node across active cluster(s)
-  let candidateCols = Array.from(primaryNodesRow.querySelectorAll('.node-column:not(.offline)'));
-  if (scenario === 'rack-aware' || (scenario === 'hvreplica' && site1Offline)) {
-    candidateCols = candidateCols.concat(Array.from(secondaryNodesRow.querySelectorAll('.node-column:not(.offline)')));
+function closeDeployChooser(restoreFocus = true) {
+  if (!deployChooser || deployChooser.hidden) return;
+  deployChooser.hidden = true;
+  deploymentReturnFocus?.setAttribute('aria-expanded', 'false');
+  if (restoreFocus) deploymentReturnFocus?.focus();
+  deploymentReturnFocus = null;
+}
+
+function focusAfterWorkloadRemoval(button, item) {
+  if (document.activeElement !== button) return;
+  const siblings = Array.from(item.parentElement.children);
+  const index = siblings.indexOf(item);
+  const nearby = [...siblings.slice(index + 1), ...siblings.slice(0, index).reverse()]
+    .map(sibling => sibling.querySelector(':scope > .workload-remove'))
+    .find(Boolean);
+  const worker = item.closest('.vm-pill');
+  const workerButton = worker !== item ? worker?.querySelector(':scope > .workload-remove') : null;
+  const deployButton = scenario === 'rack-aware' ? btnAddVmRack : btnAddVm;
+  (nearby || workerButton || deployButton)?.focus({ preventScroll: true });
+}
+
+function removeSimulatedWorkload(workload, button) {
+  const podCount = workload.dataset.workloadKind === 'aks-node' ? getWorkerPodCount(workload) : 0;
+  if (podCount > 0) {
+    const workers = getDeploymentTargets()
+      .flatMap(item => Array.from(item.box.querySelectorAll('.vm-pill.aks[data-workload-kind="aks-node"]')))
+      .filter(worker => worker !== workload);
+    if (!workers.length) {
+      showToast('Cannot Remove AKS Worker', 'Bring another AKS worker online before removing this worker node.', 'icons/aks.svg');
+      return;
+    }
+    for (let k = 0; k < podCount; k++) {
+      workers.sort((a, b) => getWorkerPodCount(a) - getWorkerPodCount(b));
+      setWorkerPodCount(workers[0], getWorkerPodCount(workers[0]) + 1, { boosted: true });
+    }
   }
-  if (!candidateCols.length) return;
 
-  candidateCols.sort((a, b) => a.querySelectorAll('.vm-pill').length - b.querySelectorAll('.vm-pill').length);
-  const targetBox = candidateCols[0].querySelector('.node-workloads');
+  const name = workload.dataset.vmName;
+  const isConfidential = workload.dataset.workloadKind === 'confidential-vm';
+  focusAfterWorkloadRemoval(button, workload);
+  workload.remove();
+  evacuatedRecords = evacuatedRecords.filter(record => record.pill !== workload);
+
+  if (scenario === 'hvreplica' && hvReplicationOn && !site1Offline) {
+    secondaryWorkloadsRow?.querySelectorAll('.ghost-replica-pill').forEach(ghost => {
+      if (ghost.dataset.vmName === name) ghost.remove();
+    });
+  }
+  if (scenario === 'confidential-computing' && isConfidential) {
+    stopDemoAutoPlay();
+    confidentialRunId += 1;
+    confidentialBusy = false;
+    confidentialStep = 0;
+    body.classList.remove('cvm-attested', 'cvm-key-released', 'cvm-policy-denied');
+    cvmAttestationStatus.textContent = 'Waiting for confidential VM evidence';
+    cvmAttestationBadge.textContent = 'Attestation service';
+    renderScenarioControlBar();
+  }
+
+  updateContainerLoads(primaryNodesRow);
+  updateContainerLoads(secondaryNodesRow);
+  const podMessage = podCount > 0 ? ` ${podCount} ${podCount === 1 ? 'pod was' : 'pods were'} redistributed to other workers.` : '';
+  showToast('Workload Removed', `${name} was removed from this browser simulation.${podMessage}`, 'icons/azure-local.svg');
+}
+
+function createAksPod(workerPill) {
+  if (!workerPill) return;
+  deploymentPodCount += 1;
+  setWorkerPodCount(workerPill, getWorkerPodCount(workerPill) + 1, { boosted: true });
+}
+
+function nextWorkloadName(type) {
+  const prefixes = {
+    vm: 'App-VM',
+    'confidential-vm': 'Confidential-VM',
+    'aks-node': 'AKS-Node',
+    'avd-host': 'AVD-Session-Host'
+  };
+  const prefix = `${prefixes[type]}-`;
+  const highest = Math.max(0, ...Array.from(document.querySelectorAll('.vm-pill[data-vm-name]'))
+    .map(pill => pill.dataset.vmName)
+    .filter(name => name.startsWith(prefix))
+    .map(name => Number(name.slice(prefix.length)) || 0));
+  return `${prefix}${String(highest + 1).padStart(2, '0')}`;
+}
+
+function deploySimulatedWorkload(type, replicaCount = 6, onComplete = null) {
+  const availability = getDeploymentAvailability(type);
+  if (!availability.available) {
+    showToast('Workload Unavailable', availability.reason, 'icons/azure-arc.svg');
+    return false;
+  }
+
+  const targets = getDeploymentTargets();
+  if (!targets.length) {
+    showToast('No Online Host Available', 'Bring a physical host online before placing a workload.', 'icons/azure-local.svg');
+    return false;
+  }
+
+  let target;
+  if (type === 'aks-pods') {
+    const workerPills = targets.flatMap(item => Array.from(item.box.querySelectorAll('.vm-pill.aks[data-workload-kind="aks-node"]')));
+    if (!workerPills.length) {
+      showToast('No AKS Worker Available', 'Deploy an AKS worker node before adding application pods.', 'icons/aks.svg');
+      return false;
+    }
+    target = workerPills[0];
+  } else {
+    targets.sort((a, b) => a.box.querySelectorAll(':scope > .vm-pill').length - b.box.querySelectorAll(':scope > .vm-pill').length);
+    target = targets[0].box;
+  }
 
   const from = (mode === 'disconnected' && mgmtClusterBox && mgmtClusterBox.getBoundingClientRect().height > 60)
     ? getMgmtConduitOrigin()
     : getCloudConduitOrigin();
-  const to = relCenter(targetBox);
-  const burstColor = mode === 'connected' ? '#38bdf8' : '#fbbf24';
+  const to = relCenter(target);
+  const color = mode === 'connected' ? '#38bdf8' : '#fbbf24';
+  const runId = deploymentRunId;
+  const launchScenario = scenario;
+  const launchMode = mode;
 
   commandBursts.push({
     sx: from.x,
@@ -2270,30 +3022,227 @@ function triggerDeployLocalVm(e) {
     tx: to.x,
     ty: to.y,
     t: 0,
-    color: burstColor,
+    color,
     onArrive: () => {
-      vmCount += 1;
-      const pill = createVmPillElement({
-        name: `App-VM-0${vmCount}`,
-        icon: 'icons/vm.svg',
-        cls: '',
-        replicable: true
-      });
-      pill.style.animation = 'spawnPop 0.5s cubic-bezier(0.22, 1, 0.36, 1)';
-      targetBox.appendChild(pill);
+      if (runId !== deploymentRunId || launchScenario !== scenario || launchMode !== mode) {
+        showToast('Deployment Canceled', 'The mode or scenario changed before placement completed, so no workload was added.', 'icons/azure-arc.svg');
+        return;
+      }
+      let destinationHost = getHostColumnFromElement(target);
+      if (type === 'aks-pods') {
+        const workers = getDeploymentTargets().flatMap(item => Array.from(item.box.querySelectorAll('.vm-pill.aks[data-workload-kind="aks-node"]')));
+        if (!workers.length) {
+          showToast('No AKS Worker Available', 'Bring an AKS worker online before adding application pods.', 'icons/aks.svg');
+          return;
+        }
+        const count = Math.max(1, Math.min(24, Number(replicaCount) || 6));
+        for (let index = 0; index < count; index++) {
+          workers.sort((a, b) => getWorkerPodCount(a) - getWorkerPodCount(b));
+          createAksPod(workers[0]);
+        }
+        showToast(
+          `${count} AKS Pods Scheduled`,
+          `The illustrative scheduler balanced replicas across ${workers.length} eligible worker nodes (placement skew at most one). Real Kubernetes placement depends on capacity and topology-spread constraints.`,
+          'icons/aks.svg'
+        );
+      } else {
+        const hostTargets = getDeploymentTargets();
+        if (!hostTargets.length) {
+          showToast('No Online Host Available', 'Bring a physical host online before placing a workload.', 'icons/azure-local.svg');
+          if (onComplete) onComplete(null);
+          return;
+        }
+        const name = nextWorkloadName(type);
+        const workload = createVmPillElement({
+          name,
+          icon: type === 'aks-node' ? 'icons/aks.svg' : (type === 'avd-host' ? 'icons/avd.svg' : 'icons/vm.svg'),
+          cls: type === 'aks-node' ? 'aks' : '',
+          kind: type,
+          extraClass: type === 'confidential-vm' ? 'confidential-vm' : '',
+          replicable: type === 'vm',
+          initialPods: 0,
+          removable: true
+        });
+        workload.style.animation = 'spawnPop 0.5s cubic-bezier(0.22, 1, 0.36, 1)';
+        hostTargets.sort((a, b) => a.box.querySelectorAll(':scope > .vm-pill').length - b.box.querySelectorAll(':scope > .vm-pill').length);
+        const destination = hostTargets.find(item => item.column === destinationHost) || hostTargets[0];
+        destination.box.appendChild(workload);
+        destinationHost = destination.column;
+        if (type === 'confidential-vm') workload.classList.add('cvm-key-waiting');
+        showToast(
+          `${DEPLOYMENT_OPTIONS.find(option => option.id === type)?.title} Deployed`,
+          `${name} was added to ${destinationHost.querySelector('.node-id-label')?.textContent || 'an online host'} in this browser simulation. No Azure resource was created.`,
+          type === 'aks-node' ? 'icons/aks.svg' : 'icons/vm.svg'
+        );
+      }
+
       updateContainerLoads(primaryNodesRow);
       updateContainerLoads(secondaryNodesRow);
-      if (scenario === 'hvreplica' && hvReplicationOn && !site1Offline) {
-        renderHvSite2StandbyState();
-      }
+      if (scenario === 'hvreplica' && hvReplicationOn && !site1Offline) renderHvSite2StandbyState();
+      if (onComplete) onComplete(destinationHost);
+    }
+  });
+  return true;
+}
+
+function triggerDeployLocalVm(event) {
+  openDeployChooser(event);
+}
+
+btnAddVm?.addEventListener('click', triggerDeployLocalVm);
+btnAddVmRack?.addEventListener('click', triggerDeployLocalVm);
+document.addEventListener('click', event => {
+  if (!deployChooser.hidden && !deployChooser.contains(event.target) && event.target !== deploymentReturnFocus) closeDeployChooser(false);
+});
+document.addEventListener('focusin', event => {
+  if (!deployChooser.hidden && !deployChooser.contains(event.target) && event.target !== deploymentReturnFocus) closeDeployChooser(false);
+});
+window.addEventListener('resize', positionDeployChooser);
+window.addEventListener('scroll', positionDeployChooser, true);
+btnConfirmDeploy?.addEventListener('click', () => {
+  const count = Number(aksPodReplicaCount.value);
+  closeDeployChooser();
+  deploySimulatedWorkload('aks-pods', count);
+});
+
+function finishConfidentialStep(runId, step) {
+  if (runId !== confidentialRunId || scenario !== 'confidential-computing') return;
+  confidentialBusy = false;
+  confidentialStep = step;
+  renderScenarioControlBar();
+}
+
+function runConfidentialFlow(fromElement, toElement, color, runId, onArrive) {
+  if (!fromElement || !toElement) {
+    confidentialBusy = false;
+    renderScenarioControlBar();
+    showToast('Confidential VM Demo Unavailable', 'The required visual service or workload is not available on the stage.', 'icons/key-vault.svg');
+    return;
+  }
+  const from = relCenter(fromElement);
+  const to = relCenter(toElement);
+  commandBursts.push({
+    sx: from.x,
+    sy: from.y,
+    tx: to.x,
+    ty: to.y,
+    t: 0,
+    speed: 0.018,
+    color,
+    onArrive: () => {
+      if (runId !== confidentialRunId || scenario !== 'confidential-computing') return;
+      onArrive();
     }
   });
 }
 
-btnAddVm.addEventListener('click', triggerDeployLocalVm);
-const btnAddVmRack = document.getElementById('btnAddVmRack');
-if (btnAddVmRack) {
-  btnAddVmRack.addEventListener('click', triggerDeployLocalVm);
+function advanceConfidentialStep() {
+  if (confidentialBusy) return;
+  if (confidentialStep >= 4) {
+    selectScenario('confidential-computing');
+    return;
+  }
+
+  const runId = confidentialRunId;
+  const cvm = primaryWorkloadsRow?.querySelector('.vm-pill.confidential-vm');
+  const attestation = document.getElementById('cvmAttestationService');
+  const keyVault = document.getElementById('cloudKeyVaultOrb');
+
+  if (confidentialStep === 0) {
+    confidentialBusy = true;
+    renderScenarioControlBar();
+    const accepted = deploySimulatedWorkload('confidential-vm', 0, () => {
+      const deployedCvm = primaryWorkloadsRow?.querySelector('.vm-pill.confidential-vm');
+      if (!deployedCvm) {
+        confidentialBusy = false;
+        renderScenarioControlBar();
+        return;
+      }
+      deployedCvm.classList.add('cvm-key-waiting');
+      if (cvmAttestationStatus) cvmAttestationStatus.textContent = 'CVM deployed locally · waiting for hardware evidence';
+      finishConfidentialStep(runId, 1);
+    });
+    if (!accepted) {
+      confidentialBusy = false;
+      renderScenarioControlBar();
+    }
+    return;
+  }
+
+  confidentialBusy = true;
+  renderScenarioControlBar();
+  if (confidentialStep === 1) {
+    if (cvmAttestationStatus) cvmAttestationStatus.textContent = 'Verifying AMD SEV-SNP hardware evidence';
+    if (cvmAttestationBadge) cvmAttestationBadge.textContent = 'Verifying evidence';
+    runConfidentialFlow(cvm, attestation, '#a78bfa', runId, () => {
+      runConfidentialFlow(attestation, cvm, '#38bdf8', runId, () => {
+        body.classList.add('cvm-attested');
+        if (cvmAttestationStatus) cvmAttestationStatus.textContent = 'Hardware-backed attestation verified · signed token returned';
+        if (cvmAttestationBadge) cvmAttestationBadge.textContent = 'Attested';
+        cvm?.classList.remove('cvm-key-waiting');
+        finishConfidentialStep(runId, 2);
+        showToast(
+          'Confidential Platform Attested',
+          'Microsoft Azure Attestation verified the hardware-rooted evidence and returned an attestation token. The workload data itself stays on-premises.',
+          'icons/defender.svg'
+        );
+      });
+    });
+    return;
+  }
+
+  if (confidentialStep === 2) {
+    if (cvmAttestationStatus) cvmAttestationStatus.textContent = 'Azure Local cluster identity requests a policy-protected key';
+    if (cvmAttestationBadge) cvmAttestationBadge.textContent = 'Evidence verified';
+    runConfidentialFlow(datacenterBox, keyVault, '#a78bfa', runId, () => {
+      runConfidentialFlow(keyVault, cvm, '#34d399', runId, () => {
+        body.classList.add('cvm-key-released');
+        if (cvmAttestationStatus) cvmAttestationStatus.textContent = 'Key Vault released the key after validating the attestation policy';
+        if (cvmAttestationBadge) cvmAttestationBadge.textContent = 'Key released';
+        cvm?.classList.remove('cvm-key-waiting');
+        finishConfidentialStep(runId, 3);
+        showToast(
+          'Secure Key Release Approved',
+          'The Azure Local host-side SDK used the cluster identity to request key release. Key Vault accepted the attestation token and the workload can process data in protected memory.',
+          'icons/key-vault.svg'
+        );
+      });
+    });
+    return;
+  }
+
+  if (cvmAttestationStatus) cvmAttestationStatus.textContent = 'Submitting evidence that does not satisfy the key-release policy';
+  if (cvmAttestationBadge) cvmAttestationBadge.textContent = 'Claim not authorized';
+  runConfidentialFlow(cvm, attestation, '#fb7185', runId, () => {
+    runConfidentialFlow(attestation, keyVault, '#fb7185', runId, () => {
+      body.classList.add('cvm-policy-denied');
+      if (cvmAttestationStatus) cvmAttestationStatus.textContent = 'Key Vault denied release · workload cannot access the protected key';
+      if (cvmAttestationBadge) cvmAttestationBadge.textContent = 'Release denied';
+      finishConfidentialStep(runId, 4);
+      showToast(
+        'Key Release Denied',
+        'The attestation evidence did not satisfy the Key Vault release policy. The VM can remain running, but its sensitive workload cannot access the key.',
+        'icons/key-vault.svg'
+      );
+    });
+  });
+}
+
+function scheduleConfidentialSteps(delays) {
+  delays.forEach((delay, index) => {
+    const timer = setTimeout(() => {
+      if (!demoAutoPlayActive || scenario !== 'confidential-computing') return;
+      advanceConfidentialStep();
+      if (index === delays.length - 1) {
+        const finishTimer = setTimeout(() => {
+          demoAutoPlayActive = false;
+          renderScenarioControlBar();
+        }, 2200);
+        demoAutoPlayTimers.push(finishTimer);
+      }
+    }, delay);
+    demoAutoPlayTimers.push(timer);
+  });
 }
 
 // ============================================================================
@@ -2311,6 +3260,8 @@ function resizeCanvas() {
 }
 
 window.addEventListener('resize', resizeCanvas);
+const visualStageResizeObserver = new ResizeObserver(resizeCanvas);
+visualStageResizeObserver.observe(visualStage);
 
 function relCenter(el) {
   const stageRect = visualStage.getBoundingClientRect();
@@ -2410,8 +3361,11 @@ function spawnAmbientParticle() {
 
   // 1. Cloud <-> Arc stream (Connected Mode) OR Dedicated 3-Node Mgmt Cluster <-> On-Premises Arc stream (Disconnected Mode)
   if (mode === 'connected' && !cableCut) {
-    if (!site1Offline || isTwoSiteScenario()) {
+    if (!site1Offline) {
       spawnCloudArcStreamParticle(arcBridgeBadge, isLight);
+    }
+    if (isTwoSiteScenario() && arcBridgeBadge2 && arcBridgeBadge2.getBoundingClientRect().width > 30 && Math.random() < 0.55) {
+      spawnCloudArcStreamParticle(arcBridgeBadge2, isLight);
     }
   } else if (mode === 'disconnected' && mgmtClusterBox) {
     if (mgmtClusterBox.getBoundingClientRect().height > 60) {
@@ -2442,8 +3396,8 @@ function spawnAmbientParticle() {
     }
   }
 
-  // 2. ASR Continuous Replication Stream (Dedicated upward VM block conduit: Site 1 -> Azure Recovery Vault)
-  if (scenario === 'asr' && !site1Offline && !cableCut) {
+  // 2. Cloud DR Continuous Replication Stream (Site 1 -> Azure Storage)
+  if (!cableCut && scenario === 'asr' && !site1Offline) {
     const asrBay = document.getElementById('asrCloudBay');
     if (asrBay) {
       const stageRect = visualStage.getBoundingClientRect();
@@ -2468,13 +3422,14 @@ function spawnAmbientParticle() {
     }
   }
 
-  // 3. Hyper-V Replica Stream (One-way async VM block replication Site 1 -> Site B on a single dedicated lane)
+  // 3. 2nd Site DR Stream (One-way VM replication Site 1 -> Site B via Hyper-V Replica or ASR Preview)
   if (scenario === 'hvreplica' && hvReplicationOn && !site1Offline) {
     const stageRect = visualStage.getBoundingClientRect();
     const pRect = datacenterBox.getBoundingClientRect();
     const sRect = secondarySiteBox.getBoundingClientRect();
     if (sRect.width > 80 && sRect.left > pRect.left + 100) {
       const midY = (Math.max(pRect.top, sRect.top) + Math.min(pRect.bottom, sRect.bottom)) / 2 - stageRect.top;
+      const isAsr = isTwoSiteAsrActive();
       particles.push({
         shape: 'block',
         sx: pRect.right - stageRect.left - 4,
@@ -2485,7 +3440,9 @@ function spawnAmbientParticle() {
         speed: 0.012 + Math.random() * 0.004,
         w: 8,
         h: 4,
-        color: isLight ? '#059669' : '#34d399'
+        color: isAsr
+          ? (isLight ? '#7c3aed' : '#c084fc')
+          : (isLight ? '#059669' : '#34d399')
       });
     }
   }
@@ -2579,7 +3536,10 @@ function animateCanvas() {
   // Guide curves: Cloud -> On-Premises Arc (Connected) OR Local Mgmt Wing -> Workload Cluster (Disconnected)!
   if (mode === 'connected' && !cableCut) {
     const origin = getCloudConduitOrigin();
-    drawControlPlaneGuide(origin, arcBridgeBadge, site1Offline && !isTwoSiteScenario(), false);
+    drawControlPlaneGuide(origin, arcBridgeBadge, site1Offline, false);
+    if (isTwoSiteScenario() && arcBridgeBadge2 && arcBridgeBadge2.getBoundingClientRect().width > 30) {
+      drawControlPlaneGuide(origin, arcBridgeBadge2, false, false);
+    }
   } else if (mode === 'disconnected' && mgmtClusterBox && mgmtClusterBox.getBoundingClientRect().width > 60) {
     const stageRect = visualStage.getBoundingClientRect();
     const mRect = mgmtClusterBox.getBoundingClientRect();
@@ -2600,8 +3560,8 @@ function animateCanvas() {
     }
   }
 
-  // Dedicated ASR Upward VM Replication Conduit across the Skyway Gap (Site 1 -> Azure Recovery Vault)
-  if (scenario === 'asr' && !cableCut) {
+  // Dedicated Cloud DR Upward VM Replication Conduit across the Skyway Gap (Site 1 -> Azure Storage)
+  if (!cableCut && scenario === 'asr') {
     const asrBay = document.getElementById('asrCloudBay');
     if (asrBay) {
       const stageRect = visualStage.getBoundingClientRect();
@@ -2636,7 +3596,7 @@ function animateCanvas() {
       ctx.setLineDash([]);
       ctx.restore();
 
-      // Upward Arrowhead at the top (entering Azure Recovery Vault) + Midpoint directional chevron
+      // Upward Arrowhead at the top (entering Azure) + Midpoint directional chevron
       drawVerticalArrowhead(ctx, laneX, yTop + 2, -1, lineColor);
       if (!site1Offline && yBottom - yTop > 55) {
         drawVerticalArrowhead(ctx, laneX, midY + 14, -1, lineColor);
@@ -2644,7 +3604,7 @@ function animateCanvas() {
 
       // Pill Badge next to the upward conduit indicating replication direction to Azure
       ctx.save();
-      const tagText = site1Offline ? 'FAILOVER ACTIVE IN AZURE' : '↑ VM REPLICATION TO AZURE (30s RPO)';
+      const tagText = site1Offline ? 'FAILOVER ACTIVE IN AZURE' : '↑ VM REPLICATION TO AZURE';
       ctx.font = '700 9.5px "Segoe UI", system-ui, sans-serif';
       const tw = ctx.measureText(tagText).width + 14;
       const pillX = laneX - tw - 14;
@@ -2736,9 +3696,11 @@ function animateCanvas() {
         ctx.fillText(tagText, cx, topY - 16);
         ctx.restore();
       } else {
-        // Hyper-V Replica: Single One-Way Async VM Replication Line (Site 1 -> Site B)
+        // 2nd Site DR: Single One-Way Site-to-Site VM Replication Line (Site 1 -> Site B via Hyper-V Replica or ASR Preview)
+        const isAsr = isTwoSiteAsrActive();
+        const activeColor = isAsr ? 'rgba(168, 85, 247, 0.72)' : 'rgba(16, 185, 129, 0.65)';
         const lineColor = hvReplicationOn
-          ? (site1Offline ? 'rgba(244, 63, 94, 0.35)' : 'rgba(16, 185, 129, 0.65)')
+          ? (site1Offline ? 'rgba(244, 63, 94, 0.35)' : activeColor)
           : 'rgba(148, 163, 184, 0.35)';
 
         ctx.save();
@@ -2754,7 +3716,7 @@ function animateCanvas() {
         drawArrowhead(ctx, x2 - 2, midY, 1, lineColor);
 
         ctx.save();
-        const tagText = hvReplicationOn ? 'ASYNC' : 'IDLE';
+        const tagText = hvReplicationOn ? (isAsr ? 'ASR' : 'ASYNC') : 'IDLE';
         ctx.font = '800 9px "Segoe UI", system-ui, sans-serif';
         const tw = ctx.measureText(tagText).width + 10;
         ctx.fillStyle = isLight ? '#ffffff' : '#0f172a';
@@ -2764,7 +3726,9 @@ function animateCanvas() {
         ctx.roundRect(cx - tw / 2, midY - 20, tw, 16, 8);
         ctx.fill();
         ctx.stroke();
-        ctx.fillStyle = hvReplicationOn ? (isLight ? '#047857' : '#6ee7b7') : '#94a3b8';
+        ctx.fillStyle = hvReplicationOn
+          ? (isAsr ? (isLight ? '#6d28d9' : '#d8b4fe') : (isLight ? '#047857' : '#6ee7b7'))
+          : '#94a3b8';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(tagText, cx, midY - 12);

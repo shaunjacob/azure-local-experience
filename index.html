@@ -32,10 +32,10 @@
       </button>
     </div>
 
-    <!-- Top-Right Scenarios Dropdown + Light/Dark Theme Switch -->
+    <!-- Top-Right Scenarios Dropdown -->
     <div class="quick-actions">
       <div id="headerScenariosPicker" class="opt5-header-picker"></div>
-      <button id="btnThemeToggle" class="theme-btn icon-only" type="button" title="Switch between Light and Dark theme" aria-label="Switch between Light and Dark theme">
+      <button id="btnThemeToggle" class="theme-btn icon-only" type="button" hidden disabled aria-hidden="true" tabindex="-1">
         🌙
       </button>
     </div>
@@ -78,17 +78,12 @@
           </div>
         </div>
 
-        <!-- Unified 7-Pillar Control Plane Services Row (All inside one cohesive Control Plane!) -->
+        <!-- Azure cloud services supporting Azure Local -->
         <div class="unified-cp-services-grid">
-          <div class="icon-orb cp-service-orb" data-tip="Azure Portal|Single browser experience to provision VMs, AKS clusters, storage, and monitor all sites.|icons/portal.svg">
+          <div class="icon-orb cp-service-orb" data-tip="Azure Portal &amp; Resource Manager|The portal is the management interface; Azure Resource Manager and its APIs process resource-management requests.|icons/portal.svg">
             <img src="icons/portal.svg" alt="Azure Portal" />
-            <span>Azure Portal</span>
-            <small>Web Console</small>
-          </div>
-          <div class="icon-orb cp-service-orb" data-tip="Azure Resource Manager (ARM)|The core deployment engine, templates, Bicep/Terraform APIs, and RBAC access control.|icons/azure-arc.svg">
-            <img src="icons/azure-arc.svg" alt="Resource Manager" />
-            <span>ARM &amp; APIs</span>
-            <small>Resource Engine</small>
+            <span>Portal + ARM APIs</span>
+            <small>Management UI</small>
           </div>
           <div class="icon-orb cp-service-orb" data-tip="Microsoft Entra ID|Signs in your team and controls role-based access (RBAC) to servers and VMs.|icons/entra.svg">
             <img src="icons/entra.svg" alt="Entra ID" />
@@ -115,6 +110,19 @@
             <span>Updates</span>
             <small>Lifecycle Mgmt</small>
           </div>
+          <div id="cloudKeyVaultOrb" class="icon-orb cp-service-orb" data-tip="Azure Key Vault|Stores keys and secrets in Azure. For the confidential VM scenario, a dedicated Key Vault releases a policy-protected key only after the attestation evidence satisfies its release policy.|icons/key-vault.svg">
+            <img src="icons/key-vault.svg" alt="Azure Key Vault" />
+            <span>Key Vault</span>
+            <small>Keys &amp; Secrets</small>
+          </div>
+        </div>
+        <div id="cvmAttestationService" class="cvm-attestation-service" aria-live="polite">
+          <img src="icons/defender.svg" alt="" />
+          <div>
+            <strong>Microsoft Azure Attestation</strong>
+            <small id="cvmAttestationStatus">Waiting for confidential VM evidence</small>
+          </div>
+          <span id="cvmAttestationBadge" class="cvm-attestation-badge">Attestation service</span>
         </div>
       </div>
 
@@ -153,13 +161,13 @@
       </div>
 
       <!-- AZURE PUBLIC CLOUD WORKLOADS / ASR VAULT (Separate sibling card so #cloudBox Control Plane never changes size!) -->
-      <div id="asrCloudBay" class="asr-cloud-bay" aria-label="Azure Site Recovery Vault">
+      <div id="asrCloudBay" class="asr-cloud-bay" aria-label="Azure Site Recovery cloud recovery">
         <div class="asr-bay-header">
-          <div class="asr-vault-title" data-tip="Azure Site Recovery|Continuously replicates local Windows &amp; Linux VMs to an Azure Recovery Services Vault (30s RPO) so they can boot in Azure if Site 1 goes offline.|icons/asr.svg">
+          <div class="asr-vault-title" data-tip="Azure Site Recovery|Replicates local VM disks to Azure Storage and coordinates recovery through a Recovery Services vault. The VMs can fail over and run in Azure.|icons/asr.svg">
             <img src="icons/asr.svg" alt="Recovery Services Vault" />
             <div>
               <strong>Azure Site Recovery · Recovery Services Vault</strong>
-              <small id="asrStatusSub">Continuous VM replication active (30s RPO) · Standing by in Azure</small>
+              <small id="asrStatusSub">VM disks replicating to Azure Storage · RPO as low as 30s</small>
             </div>
           </div>
         </div>
@@ -255,7 +263,7 @@
             </div>
           </div>
 
-          <div class="service-tile" data-tip="Local AI — Foundry Local, Edge RAG &amp; Azure AI Containers|Connected Mode supports Foundry Local, Edge RAG &amp; Azure ML. Disconnected Mode supports local AI containers (Document Intelligence, Vision, Language, Translator) on GPUs.|icons/ai.svg">
+          <div id="localAiServiceTile" class="service-tile" data-tip="Foundry Local on Azure Local|Connected deployments use online sources to install the extension and obtain model artifacts. Inference runs on the local Azure Local cluster.|icons/ai.svg">
             <img src="icons/ai.svg" alt="Local AI Services" />
             <div class="service-tile-text">
               <strong>Local AI Services</strong>
@@ -273,15 +281,15 @@
         </div>
       </section>
 
-      <!-- Shown only in Rack-Aware Cluster mode to visually unite Site 1 + Site 2 as ONE cluster -->
+      <!-- Shown only in Rack Aware Cluster mode to visually unite Site 1 + Site 2 as ONE cluster -->
       <div id="rackAwareHeader" class="rack-aware-header" hidden>
-        <div class="ra-badge">🔗 Stretched Rack-Aware Cluster</div>
+        <div class="ra-badge">🔗 Rack Aware Cluster</div>
         <div class="ra-header-controls">
-          <button id="btnAddVmRack" class="cluster-deploy-btn" type="button" title="Deploy a new VM to this stretched cluster">
+          <button id="btnAddVmRack" class="cluster-deploy-btn" type="button" title="Choose a workload to deploy to this cluster" aria-expanded="false" aria-controls="deployChooser">
             <img src="icons/vm.svg" alt="" />
-            <span>+ Deploy VM</span>
+            <span>Deploy</span>
           </button>
-          <div class="storage-mode-toggle" data-storage-site="1" role="group" aria-label="Stretched Cluster Storage Architecture">
+          <div class="storage-mode-toggle" data-storage-site="1" role="group" aria-label="Rack Aware Cluster Storage Architecture">
             <span class="storage-toggle-lbl">Storage:</span>
             <button type="button" class="stg-btn active" data-stg-mode="s2d">S2D Only (&lt;1ms)</button>
             <button type="button" class="stg-btn" data-stg-mode="san">SAN Only (&lt;5ms)</button>
@@ -324,13 +332,13 @@
                   <img src="icons/policy.svg" alt="Azure Policy" />
                   <span>Policy</span>
                 </div>
-                <div class="icon-orb cp-service-orb" data-tip="Azure Key Vault|Create and manage local Key Vaults to store and access secrets, keys, and certificates offline.|icons/key-vault.svg">
+                <div class="icon-orb cp-service-orb" data-tip="Local Azure Key Vault|Disconnected operations support local vaults for storing and accessing secrets. This is separate from the public Azure Key Vault secure-key-release flow shown for confidential VMs.|icons/key-vault.svg">
                   <img src="icons/key-vault.svg" alt="Key Vault" />
                   <span>Key Vault</span>
                 </div>
                 <div class="icon-orb cp-service-orb" data-tip="Monitor &amp; Log Collection|Monitor infrastructure and workloads running in Disconnected Operations with local metrics and on-demand log collection.|icons/monitor.svg">
                   <img src="icons/monitor.svg" alt="Monitor" />
-                  <span>Monitor</span>
+                  <span>Local Monitoring</span>
                 </div>
               </div>
             </div>
@@ -356,37 +364,53 @@
             </div>
 
             <!-- 3. Local Identity & PKI Prerequisite Strip inside Left Datacenter Wing -->
-            <div id="localIdentityBox" class="mgmt-identity-strip" aria-label="Separate Local Identity Infrastructure">
+            <div id="localIdentityBox" class="mgmt-identity-strip" aria-label="Local identity services and customer-provided prerequisites">
               <div class="mgmt-identity-header">
-                <div class="mgmt-identity-title">
+                <div class="mgmt-identity-title" data-tip="Local Identity &amp; PKI|Current disconnected identity integration uses customer-provided AD DS for group synchronization and AD FS for OIDC authentication. STS and Graph are hosted by the appliance; broader identity-provider choices are planned for 2704.|icons/key-vault.svg">
                   <img src="icons/key-vault.svg" alt="" />
                   <span>Local Identity &amp; PKI</span>
                 </div>
-                <span class="mgmt-identity-link-pill">⇄ OIDC &amp; LDAPS</span>
+                <span class="mgmt-identity-link-pill">⇄ OIDC · LDAPS · TLS</span>
               </div>
 
               <div class="mgmt-identity-cards-grid">
-                <div class="identity-service-card" data-tip="Active Directory (AD DS)|External on-premises Active Directory syncs Universal groups and memberships to the Disconnected Operations appliance over LDAPS.|icons/entra.svg">
+                <div class="identity-service-card customer-service" data-tip="Active Directory Domain Services (AD DS)|Customer-provided AD DS syncs Universal groups and memberships to disconnected operations over LDAPS.|icons/entra.svg">
                   <img src="icons/entra.svg" alt="Active Directory" />
                   <div>
                     <strong>AD DS</strong>
-                    <small>LDAPS</small>
+                    <small>Customer</small>
                   </div>
                 </div>
 
-                <div class="identity-service-card" data-tip="Active Directory Federation Services (AD FS)|External on-premises AD FS server authenticates operators and users into the local Azure Portal &amp; CLI via OpenID Connect (OIDC).|icons/ad-fs.svg">
+                <div class="identity-service-card customer-service" data-tip="Active Directory Federation Services (AD FS)|Customer-provided AD FS authenticates operators and users into the local Azure portal and CLI via OpenID Connect (OIDC).|icons/ad-fs.svg">
                   <img src="icons/ad-fs.svg" alt="AD FS" />
                   <div>
                     <strong>AD FS</strong>
-                    <small>OIDC Auth</small>
+                    <small>Customer</small>
                   </div>
                 </div>
 
-                <div class="identity-service-card" data-tip="Internal DNS &amp; PKI Certificates|Existing on-premises DNS resolves local portal/identity endpoints and enterprise PKI secures OIDC, LDAPS, and appliance TLS endpoints.|icons/pki.svg">
+                <div class="identity-service-card customer-service" data-tip="Internal DNS &amp; PKI Certificates|Customer-provided DNS resolves local portal and identity endpoints. Enterprise PKI secures OIDC, LDAPS, and appliance TLS endpoints.|icons/pki.svg">
                   <img src="icons/pki.svg" alt="PKI and DNS" />
                   <div>
-                    <strong>DNS &amp; PKI</strong>
-                    <small>TLS Certs</small>
+                    <strong>DNS/PKI</strong>
+                    <small>Customer</small>
+                  </div>
+                </div>
+
+                <div class="identity-service-card appliance-service" data-tip="Secure Token Service (STS)|The disconnected operations appliance hosts a local token service at its login endpoint. It works with the configured AD FS OIDC identity integration to authenticate users and issue local tokens.|icons/ad-fs.svg">
+                  <img src="icons/ad-fs.svg" alt="" />
+                  <div>
+                    <strong>STS</strong>
+                    <small>Appliance</small>
+                  </div>
+                </div>
+
+                <div class="identity-service-card appliance-service" data-tip="Local Graph endpoint|The disconnected operations appliance hosts a local Graph API endpoint for app identity flows, including service principals and supported system-assigned managed identities. This is not the public Microsoft Graph service.|icons/entra.svg">
+                  <img src="icons/entra.svg" alt="" />
+                  <div>
+                    <strong>Graph</strong>
+                    <small>Appliance</small>
                   </div>
                 </div>
               </div>
@@ -408,9 +432,9 @@
 
             <div class="site-header-right">
               <div class="cluster-header-controls site-inline-controls">
-                <button id="btnAddVm" class="cluster-deploy-btn" type="button" title="Deploy a new VM to this local cluster from the active Azure Control Plane">
+                <button id="btnAddVm" class="cluster-deploy-btn" type="button" title="Choose a workload to deploy to this cluster" aria-expanded="false" aria-controls="deployChooser">
                   <img src="icons/vm.svg" alt="" />
-                  <span>+ Deploy VM</span>
+                  <span>Deploy</span>
                 </button>
                 <div class="storage-mode-toggle" data-storage-site="1" role="group" aria-label="Site 1 Storage Architecture">
                   <span class="storage-toggle-lbl">Storage:</span>
@@ -432,21 +456,49 @@
                   <div id="primaryClusterBadge"></div>
                 </div>
 
-                <!-- Dynamic / 4-Node Physical Server Row for Site 1 -->
-                <div id="primaryNodesRow" class="physical-servers-row"></div>
-
-                <!-- Site 1 Configurable Storage Stack (S2D Only / SAN Only / S2D + SAN) -->
-                <div id="primaryStorageStack" class="cluster-storage-stack">
-                  <div id="primaryStorageBar" class="shared-storage-bar s2d-fabric-bar" data-tip="Storage Spaces Direct (S2D)|Hyperconverged internal NVMe/SSD drives pooled across all cluster nodes into shared Cluster Shared Volumes (CSVs).|icons/azure-local.svg">
-                    <span>⇄ Shared S2D Storage Pool (Internal NVMe)</span>
+                <!-- 3-Layer Left-Rail Architecture Stack for Site 1 -->
+                <div class="cluster-rail-stack">
+                  <div class="cluster-rail-row workloads-rail-row">
+                    <div class="cluster-rail-head vms-tone">
+                      <strong>Workloads &amp; Apps</strong>
+                      <small>VMs, AKS &amp; Pods</small>
+                    </div>
+                    <div class="cluster-rail-body">
+                      <div id="primaryWorkloadsRow" class="physical-servers-row cols-4"></div>
+                    </div>
                   </div>
 
-                  <div id="primarySanBlock" class="external-san-section" hidden>
-                    <div class="external-san-card" data-tip="External SAN Storage Array|Attach Fibre Channel or iSCSI SAN arrays (Pure, Dell, HPE, Hitachi, NetApp) either alongside S2D (Hybrid) or standalone (Disaggregated SAN-only) as shared CSVs.|icons/storage.svg">
-                      <img src="icons/storage.svg" alt="External SAN Array" class="san-array-icon" />
-                      <div class="san-card-info">
-                        <strong>External SAN Array</strong>
-                        <span>Fibre Channel / iSCSI Shared Volumes</span>
+                  <div class="cluster-rail-row compute-rail-row">
+                    <div class="cluster-rail-head compute-tone">
+                      <strong>Compute</strong>
+                      <small id="primaryComputeRailSub">Nodes 1–4 Hardware</small>
+                    </div>
+                    <div class="cluster-rail-body">
+                      <div id="primaryNodesRow" class="physical-servers-row cols-4"></div>
+                    </div>
+                  </div>
+
+                  <div class="cluster-rail-row storage-rail-row">
+                    <div class="cluster-rail-head storage-tone">
+                      <strong>Storage</strong>
+                      <small id="primaryStorageRailSub">S2D Pool</small>
+                    </div>
+                    <div class="cluster-rail-body">
+                      <!-- Site 1 Configurable Storage Stack (S2D Only / SAN Only / S2D + SAN) -->
+                      <div id="primaryStorageStack" class="cluster-storage-stack">
+                        <div id="primaryStorageBar" class="shared-storage-bar s2d-fabric-bar" data-tip="Storage Spaces Direct (S2D)|Hyperconverged internal NVMe/SSD drives pooled across all cluster nodes into shared Cluster Shared Volumes (CSVs).|icons/azure-local.svg">
+                          <span>⇄ Shared S2D Storage Pool (Internal NVMe)</span>
+                        </div>
+
+                        <div id="primarySanBlock" class="external-san-section" hidden>
+                          <div class="external-san-card" data-tip="External SAN Storage Array|Attach Fibre Channel or iSCSI SAN arrays (Pure, Dell, HPE, Hitachi, NetApp) either alongside S2D (Hybrid) or standalone (Disaggregated SAN-only) as shared CSVs.|icons/storage.svg">
+                            <img src="icons/storage.svg" alt="External SAN Array" class="san-array-icon" />
+                            <div class="san-card-info">
+                              <strong>External SAN Array</strong>
+                              <span>Fibre Channel / iSCSI Shared Volumes</span>
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -489,25 +541,53 @@
               <div class="cluster-enclosure" data-site-storage="s2d" id="secondaryClusterEnclosure">
                 <div class="sr-only-meta" hidden>
                   <strong id="secondaryClusterTitle"></strong>
-                  <span id="secondaryClusterSub"></strong>
+                  <span id="secondaryClusterSub"></span>
                   <div id="secondaryClusterBadge"></div>
                 </div>
 
-                <!-- Dynamic Customizable Nodes Row for Site 2 -->
-                <div id="secondaryNodesRow" class="physical-servers-row cols-2"></div>
-
-                <!-- Site 2 Configurable Storage Stack -->
-                <div id="secondaryStorageStack" class="cluster-storage-stack">
-                  <div id="secondaryStorageBar" class="shared-storage-bar s2d-fabric-bar" data-tip="Storage Spaces Direct (S2D)|Hyperconverged internal NVMe/SSD drives pooled across Site 2 nodes into shared Cluster Shared Volumes (CSVs).|icons/azure-local.svg">
-                    <span>⇄ Shared S2D Storage Pool (Internal NVMe)</span>
+                <!-- 3-Layer Left-Rail Architecture Stack for Site 2 -->
+                <div class="cluster-rail-stack">
+                  <div class="cluster-rail-row workloads-rail-row">
+                    <div class="cluster-rail-head vms-tone">
+                      <strong>Workloads &amp; Apps</strong>
+                      <small>VMs, AKS &amp; Pods</small>
+                    </div>
+                    <div class="cluster-rail-body">
+                      <div id="secondaryWorkloadsRow" class="physical-servers-row cols-2"></div>
+                    </div>
                   </div>
 
-                  <div id="secondarySanBlock" class="external-san-section" hidden>
-                    <div class="external-san-card" data-tip="External SAN Storage Array (Site 2)|Site 2 can independently use S2D only, SAN only (Disaggregated), or S2D + SAN together.|icons/storage.svg">
-                      <img src="icons/storage.svg" alt="External SAN Array" class="san-array-icon" />
-                      <div class="san-card-info">
-                        <strong>External SAN Array</strong>
-                        <span>Fibre Channel / iSCSI Shared Volumes</span>
+                  <div class="cluster-rail-row compute-rail-row">
+                    <div class="cluster-rail-head compute-tone">
+                      <strong>Compute</strong>
+                      <small id="secondaryComputeRailSub">Nodes 1–2 Hardware</small>
+                    </div>
+                    <div class="cluster-rail-body">
+                      <div id="secondaryNodesRow" class="physical-servers-row cols-2"></div>
+                    </div>
+                  </div>
+
+                  <div class="cluster-rail-row storage-rail-row">
+                    <div class="cluster-rail-head storage-tone">
+                      <strong>Storage</strong>
+                      <small id="secondaryStorageRailSub">S2D Pool</small>
+                    </div>
+                    <div class="cluster-rail-body">
+                      <!-- Site 2 Configurable Storage Stack -->
+                      <div id="secondaryStorageStack" class="cluster-storage-stack">
+                        <div id="secondaryStorageBar" class="shared-storage-bar s2d-fabric-bar" data-tip="Storage Spaces Direct (S2D)|Hyperconverged internal NVMe/SSD drives pooled across Site 2 nodes into shared Cluster Shared Volumes (CSVs).|icons/azure-local.svg">
+                          <span>⇄ Shared S2D Storage Pool (Internal NVMe)</span>
+                        </div>
+
+                        <div id="secondarySanBlock" class="external-san-section" hidden>
+                          <div class="external-san-card" data-tip="External SAN Storage Array (Site 2)|Site 2 can independently use S2D only, SAN only (Disaggregated), or S2D + SAN together.|icons/storage.svg">
+                            <img src="icons/storage.svg" alt="External SAN Array" class="san-array-icon" />
+                            <div class="san-card-info">
+                              <strong>External SAN Array</strong>
+                              <span>Fibre Channel / iSCSI Shared Volumes</span>
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -519,9 +599,9 @@
       </div>
       </div>
 
-      <!-- Unified Stretched Synchronous Storage Bar (Shown in Rack-Aware Cluster Mode) -->
-      <div id="rackAwareStorageFooter" class="rack-aware-storage-footer" hidden data-tip="Rack-Aware Synchronous Storage Pool|One single Storage Spaces Direct pool stretched across Site 1 (Zone 1) and Site 2 (Zone 2) over ≤1ms dedicated RDMA links—every write is mirrored synchronously in both zones!|icons/azure-local.svg">
-        ⇄ Single Stretched S2D Pool · Synchronously Mirrored Across Zone 1 &amp; Zone 2 (&lt; 1 ms RDMA)
+      <!-- Unified Synchronous Storage Bar (Shown in Rack Aware Cluster Mode) -->
+      <div id="rackAwareStorageFooter" class="rack-aware-storage-footer" hidden data-tip="Rack Aware Synchronous Storage Pool|One single Storage Spaces Direct pool spanning Site 1 (Zone 1) and Site 2 (Zone 2) over ≤1ms dedicated RDMA links. Every write is mirrored synchronously in both zones.|icons/azure-local.svg">
+        ⇄ Single S2D Pool · Synchronously Mirrored Across Zone 1 &amp; Zone 2 (&lt; 1 ms RDMA)
       </div>
     </div>
   </main>
@@ -582,6 +662,20 @@
           No scenarios match your search. Try another keyword or select <strong>All Demos</strong>.
         </div>
       </div>
+    </div>
+  </div>
+
+  <div id="deployChooser" class="deploy-chooser" role="group" aria-label="Choose a workload to deploy" hidden>
+    <div id="deployOptionGrid" class="deploy-option-grid"></div>
+    <div id="aksPodReplicaControls" class="aks-pod-replica-controls" hidden>
+      <label for="aksPodReplicaCount">Replicas</label>
+      <select id="aksPodReplicaCount">
+        <option value="3">3</option>
+        <option value="6" selected>6</option>
+        <option value="9">9</option>
+        <option value="12">12</option>
+      </select>
+      <button id="btnConfirmDeploy" type="button">Deploy pods</button>
     </div>
   </div>
 
