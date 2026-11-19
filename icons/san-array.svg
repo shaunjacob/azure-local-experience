@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+  <defs>
+    <linearGradient id="sanChassis" x1="2" y1="3" x2="22" y2="21" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#475569"/>
+      <stop offset="1" stop-color="#1e293b"/>
+    </linearGradient>
+    <linearGradient id="sanAccent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#a855f7"/>
+      <stop offset="1" stop-color="#6d28d9"/>
+    </linearGradient>
+  </defs>
+  <!-- Top SAN Disk Shelf -->
+  <rect x="2" y="3.5" width="20" height="7.5" rx="2" fill="url(#sanChassis)" stroke="#64748b" stroke-width="1"/>
+  <rect x="3.5" y="5" width="1.6" height="4.5" rx="0.5" fill="#cbd5e1"/>
+  <rect x="6.1" y="5" width="1.6" height="4.5" rx="0.5" fill="#cbd5e1"/>
+  <rect x="8.7" y="5" width="1.6" height="4.5" rx="0.5" fill="#cbd5e1"/>
+  <rect x="11.3" y="5" width="1.6" height="4.5" rx="0.5" fill="#cbd5e1"/>
+  <rect x="13.9" y="5" width="1.6" height="4.5" rx="0.5" fill="#cbd5e1"/>
+  <circle cx="18" cy="7.25" r="1.1" fill="#c084fc"/>
+  <circle cx="20.1" cy="7.25" r="0.9" fill="#34d399"/>
+
+  <!-- Bottom SAN Disk Shelf -->
+  <rect x="2" y="13" width="20" height="7.5" rx="2" fill="url(#sanChassis)" stroke="#64748b" stroke-width="1"/>
+  <rect x="3.5" y="14.5" width="1.6" height="4.5" rx="0.5" fill="#cbd5e1"/>
+  <rect x="6.1" y="14.5" width="1.6" height="4.5" rx="0.5" fill="#cbd5e1"/>
+  <rect x="8.7" y="14.5" width="1.6" height="4.5" rx="0.5" fill="#cbd5e1"/>
+  <rect x="11.3" y="14.5" width="1.6" height="4.5" rx="0.5" fill="#cbd5e1"/>
+  <rect x="13.9" y="14.5" width="1.6" height="4.5" rx="0.5" fill="#cbd5e1"/>
+  <circle cx="18" cy="16.75" r="1.1" fill="url(#sanAccent)"/>
+  <circle cx="20.1" cy="16.75" r="0.9" fill="#34d399"/>
+</svg>

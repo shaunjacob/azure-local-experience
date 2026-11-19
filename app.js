@@ -526,7 +526,7 @@ function applyRackAwareStorageFooterText() {
   const raMeta = document.getElementById('rackAwareMetaText');
   if (site1StorageMode === 'san') {
     rackAwareStorageFooter.innerHTML = '⇄ Enterprise SAN Only · Synchronously Replicated Across Zone 1 &amp; Zone 2 (&lt; 5 ms Latency · Zero Data Loss)';
-    rackAwareStorageFooter.setAttribute('data-tip', 'Rack Aware SAN Only (< 5 ms)|In a Rack Aware cluster using External SAN Only, storage arrays replicate synchronously across Zone 1 & Zone 2 with a latency requirement of < 5 ms.|icons/storage.svg');
+    rackAwareStorageFooter.setAttribute('data-tip', 'Rack Aware SAN Only (< 5 ms)|In a Rack Aware cluster using External SAN Only, storage arrays replicate synchronously across Zone 1 & Zone 2 with a latency requirement of < 5 ms.|icons/san-array.svg');
     if (raMeta) {
       raMeta.textContent = 'SAN Only (< 5 ms Latency) · Zero Data Loss';
     }
@@ -548,7 +548,7 @@ function applyRackAwareStorageFooterText() {
 function applyClusterStorageMode(siteNum, nextStgMode, announce = false) {
   let switchedFromAsrToHyperv = false;
   if (scenario === 'hvreplica' && announce && (site1Offline || twoSiteDrBusy)) {
-    showToast('Recovery In Progress', 'Complete failback or clear the scenario before changing storage.', 'icons/storage.svg');
+    showToast('Recovery In Progress', 'Complete failback or clear the scenario before changing storage.', 'icons/san-array.svg');
     return;
   }
 
@@ -643,7 +643,7 @@ function applyClusterStorageMode(siteNum, nextStgMode, announce = false) {
         : 'Disaggregated compute nodes connected via Fibre Channel or iSCSI to an external enterprise SAN array.',
       both: 'Internal S2D NVMe pool running side-by-side with external Fibre Channel / iSCSI SAN CSVs on the same cluster.'
     };
-    showToast(titles[nextStgMode], descs[nextStgMode], nextStgMode === 's2d' ? 'icons/azure-local.svg' : 'icons/storage.svg');
+    showToast(titles[nextStgMode], descs[nextStgMode], nextStgMode === 's2d' ? 'icons/azure-local.svg' : 'icons/san-array.svg');
   }
 }
 
@@ -2371,7 +2371,7 @@ function triggerRackAwareZoneFailoverToggle() {
       isSanRa
         ? 'Because Site 1 & Site 2 share synchronous SAN storage (< 5 ms latency), all Zone 1 VMs & AKS nodes automatically restarted in Zone 2 with zero data loss!'
         : 'Because Site 1 & Site 2 share one synchronous Storage Spaces Direct pool (< 1 ms RDMA), all Zone 1 VMs & AKS nodes automatically restarted in Zone 2 with zero data loss!',
-      isSanRa ? 'icons/storage.svg' : 'icons/azure-local.svg'
+      isSanRa ? 'icons/san-array.svg' : 'icons/azure-local.svg'
     );
   } else {
     site1Offline = false;
