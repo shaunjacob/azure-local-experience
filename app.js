@@ -552,6 +552,7 @@ function applyClusterStorageMode(siteNum, nextStgMode, announce = false) {
     return;
   }
 
+  const prevSiteStorage = siteNum === 1 ? site1StorageMode : site2StorageMode;
   if (scenario === 'rack-aware') {
     // Rack-Aware clusters only support S2D Only (< 1 ms) or SAN Only (< 5 ms), never S2D + SAN combined
     if (nextStgMode === 'both') nextStgMode = 's2d';
@@ -561,6 +562,19 @@ function applyClusterStorageMode(siteNum, nextStgMode, announce = false) {
     site1StorageMode = nextStgMode;
   } else {
     site2StorageMode = nextStgMode;
+  }
+
+  if (announce && prevSiteStorage !== nextStgMode) {
+    const storageLabels = {
+      s2d: scenario === 'rack-aware' ? 'Rack Aware S2D Only (<1ms)' : 'Storage Spaces Direct (S2D)',
+      san: scenario === 'rack-aware' ? 'Rack Aware SAN Only (<5ms)' : 'External SAN',
+      both: 'Hybrid S2D + External SAN'
+    };
+    trackVisualizerEvent('storage_mode_changed', {
+      site: scenario === 'rack-aware' ? 'Zone 1 & Zone 2' : (siteNum === 1 ? 'Site 1' : 'Site B'),
+      storageMode: nextStgMode,
+      storageLabel: storageLabels[nextStgMode] || nextStgMode
+    });
   }
 
   if (scenario === 'hvreplica' && twoSiteDrMethod === 'asr' && !twoSiteSanOnly()) {
@@ -724,8 +738,9 @@ function moveControlPlaneTo(targetDock, newLocationText) {
   });
 }
 
-function setMode(nextMode) {
+function setMode(nextMode, initiator = 'scenario') {
   if (nextMode === mode) return;
+  const previousMode = mode;
   closeDeployChooser(false);
 
   // Cloud-only scenarios reset cleanly if switching to Disconnected Mode
@@ -798,12 +813,17 @@ function setMode(nextMode) {
     renderHvSite2StandbyState();
     renderScenarioControlBar();
   }
+  trackVisualizerEvent('connection_mode_changed', {
+    newMode: mode,
+    previousMode,
+    initiator
+  });
   setTimeout(resizeCanvas, 260);
   setTimeout(resizeCanvas, 820);
 }
 
-btnConnected.addEventListener('click', () => setMode('connected'));
-btnDisconnected.addEventListener('click', () => setMode('disconnected'));
+btnConnected.addEventListener('click', () => setMode('connected', 'user'));
+btnDisconnected.addEventListener('click', () => setMode('disconnected', 'user'));
 
 body.classList.add('light-mode');
 if (btnThemeToggle) {
@@ -935,6 +955,115 @@ const SCENARIO_CATALOG = [
   }
 ];
 
+// ============================================================================
+// TELEMETRY & SCENARIO USAGE ANALYTICS (Azure Application Insights)
+// ============================================================================
+const APP_TELEMETRY_VERSION = '2026.11';
+let scenarioEnteredAt = Date.now();
+let scenarioDwellFlushedForHide = false;
+let pendingScenarioTriggerSource = 'programmatic';
+
+function getTelemetryDeliverySource() {
+  const host = window.location.hostname || '';
+  const proto = window.location.protocol || '';
+  if (proto === 'file:') return 'local-file';
+  if (/github\.io$/i.test(host)) return 'github-pages';
+  if (/^(localhost|127\.0\.0\.1)$/i.test(host)) return 'localhost';
+  return host || 'unknown';
+}
+
+function getViewportBucket() {
+  const w = window.innerWidth || 0;
+  if (w < 768) return 'mobile';
+  if (w < 1200) return 'tablet';
+  return 'desktop';
+}
+
+function getScenarioMetaById(scenId) {
+  return SCENARIO_CATALOG.find(item => item.id === scenId) || {
+    id: scenId || 'default',
+    title: scenId === 'default' ? 'Single-Site Overview' : String(scenId || 'Single-Site Overview'),
+    category: 'Architecture & Outage'
+  };
+}
+
+function trackVisualizerEvent(name, properties = {}, measurements = {}) {
+  try {
+    if (!window.appInsights || typeof window.appInsights.trackEvent !== 'function') return;
+    const currentMeta = getScenarioMetaById(scenario);
+    const mergedProps = {
+      product: 'azure-local-experience',
+      appVersion: APP_TELEMETRY_VERSION,
+      source: getTelemetryDeliverySource(),
+      protocol: window.location.protocol || '',
+      mode,
+      scenarioId: scenario,
+      scenarioTitle: currentMeta.title,
+      scenarioCategory: currentMeta.category,
+      site1Storage: site1StorageMode,
+      site2Storage: site2StorageMode,
+      viewportBucket: getViewportBucket(),
+      ...properties
+    };
+    const payload = { name, properties: mergedProps };
+    if (measurements && Object.keys(measurements).length > 0) {
+      payload.measurements = measurements;
+    }
+    window.appInsights.trackEvent(payload);
+  } catch (_) {
+    // Telemetry must never disrupt UI interactions
+  }
+}
+
+function flushScenarioDwell(scenId, exitReason) {
+  const elapsedSec = Math.min(1800, Math.round(((Date.now() - scenarioEnteredAt) / 1000) * 10) / 10);
+  if (elapsedSec < 1.5) return;
+  const meta = getScenarioMetaById(scenId);
+  trackVisualizerEvent(
+    'scenario_dwell',
+    {
+      scenarioId: meta.id,
+      scenarioTitle: meta.title,
+      scenarioCategory: meta.category,
+      exitReason
+    },
+    { dwellSec: elapsedSec }
+  );
+}
+
+function trackScenarioStep(stepLabel, extraProps = {}) {
+  trackVisualizerEvent('scenario_step_executed', {
+    stepLabel,
+    playMode: demoAutoPlayActive ? 'autoplay' : 'manual',
+    ...extraProps
+  });
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    if (!scenarioDwellFlushedForHide) {
+      scenarioDwellFlushedForHide = true;
+      flushScenarioDwell(scenario, 'page_hidden');
+      try {
+        window.appInsights?.flush?.();
+      } catch (_) {}
+    }
+  } else if (document.visibilityState === 'visible') {
+    scenarioDwellFlushedForHide = false;
+    scenarioEnteredAt = Date.now();
+  }
+});
+
+window.addEventListener('pagehide', () => {
+  if (!scenarioDwellFlushedForHide) {
+    scenarioDwellFlushedForHide = true;
+    flushScenarioDwell(scenario, 'page_hidden');
+    try {
+      window.appInsights?.flush?.();
+    } catch (_) {}
+  }
+});
+
 let activeCatalogCategory = 'All';
 let catalogSearchQuery = '';
 let c1DrawerOpen = false;
@@ -1038,6 +1167,7 @@ function renderCatalogCards() {
       e.stopPropagation();
       const targetId = card.getAttribute('data-launch-scenario');
       closeScenarioCatalog();
+      pendingScenarioTriggerSource = 'catalog-modal';
       selectScenario(targetId);
     });
   });
@@ -1172,6 +1302,9 @@ function clearAllScenarioStates() {
 }
 
 function selectScenario(nextScenario) {
+  const triggerSource = pendingScenarioTriggerSource;
+  pendingScenarioTriggerSource = 'programmatic';
+  const prevScenario = scenario;
   closeDeployChooser(false);
   if (nextScenario === 'confidential-computing' && (mode === 'disconnected' || cableCut)) {
     showToast(
@@ -1181,10 +1314,28 @@ function selectScenario(nextScenario) {
     );
     return;
   }
+  if (prevScenario !== nextScenario) {
+    flushScenarioDwell(prevScenario, nextScenario === 'default' ? 'cleared' : 'switched');
+    scenarioEnteredAt = Date.now();
+    scenarioDwellFlushedForHide = false;
+  }
   clearAllScenarioStates();
   scenario = nextScenario;
   c1DrawerOpen = false;
   updateCatalogTriggerButton();
+
+  if (triggerSource !== 'programmatic' && (prevScenario !== nextScenario || nextScenario !== 'default')) {
+    const prevMeta = getScenarioMetaById(prevScenario);
+    const nextMeta = getScenarioMetaById(nextScenario);
+    trackVisualizerEvent('scenario_selected', {
+      scenarioId: nextMeta.id,
+      scenarioTitle: nextMeta.title,
+      scenarioCategory: nextMeta.category,
+      triggerSource,
+      previousScenarioId: prevMeta.id,
+      previousScenarioTitle: prevMeta.title
+    });
+  }
 
   if (scenario === 'default') {
     if (mode === 'disconnected') {
@@ -1297,6 +1448,12 @@ function selectTwoSiteDrMethod(method) {
     autoSwitchedSan = true;
   }
   twoSiteDrMethod = method;
+  trackVisualizerEvent('topology_config_changed', {
+    setting: 'dr_method',
+    settingLabel: '2nd Site DR Method',
+    value: method,
+    valueLabel: method === 'asr' ? 'ASR (SAN-to-SAN Preview)' : 'Hyper-V Replica'
+  });
   syncTwoSitePresentation();
   renderHvSite2StandbyState();
   renderScenarioControlBar();
@@ -1317,6 +1474,12 @@ function resizeTwoSiteNodes(count) {
     return;
   }
   hvSite2Nodes = count;
+  trackVisualizerEvent('topology_config_changed', {
+    setting: 'site2_nodes',
+    settingLabel: 'Site B Node Count',
+    value: String(count),
+    valueLabel: `${count}-Node Site B`
+  });
   buildHvReplicaSite2Cluster();
   renderScenarioControlBar();
   setTimeout(resizeCanvas, 150);
@@ -1325,6 +1488,7 @@ function resizeTwoSiteNodes(count) {
 function startTwoSiteHypervReplication() {
   if (scenario !== 'hvreplica' || twoSiteDrBusy || site1Offline) return;
   hvReplicationOn = true;
+  trackScenarioStep(isTwoSiteAsrActive() ? 'Start ASR SAN Replication' : 'Start Hyper-V Replica');
   syncTwoSitePresentation();
   renderHvSite2StandbyState();
   renderScenarioControlBar();
@@ -1602,12 +1766,14 @@ function renderScenarioControlBar() {
   const clearDefaultBtn = scenarioQuickStrip.querySelector('[data-c1-clear-default]');
   if (clearDefaultBtn) {
     clearDefaultBtn.addEventListener('click', () => {
+      pendingScenarioTriggerSource = 'clear';
       selectScenario('default');
     });
   }
 
   scenarioQuickStrip.querySelectorAll('[data-c1-quick-jump]').forEach(btn => {
     btn.addEventListener('click', () => {
+      pendingScenarioTriggerSource = 'quick-strip';
       selectScenario(btn.getAttribute('data-c1-quick-jump'));
     });
   });
@@ -1618,6 +1784,7 @@ function renderScenarioControlBar() {
       openScenarioCatalog();
     } else if (scenario === 'wan-outage') {
       cableCut = !cableCut;
+      trackScenarioStep(cableCut ? 'Sever WAN Link' : 'Restore WAN Link');
       body.classList.toggle('cable-cut', cableCut);
       arcBridgeText.textContent = cableCut ? 'Offline Survival (Up to 30 Days)' : 'Connected via Azure Arc';
       renderScenarioControlBar();
@@ -1695,6 +1862,7 @@ function renderScenarioControlBar() {
         renderScenarioControlBar();
         return;
       }
+      trackVisualizerEvent('scenario_autoplay_started');
       if (scenario === 'update-manager') {
         const patchedCount = primaryNodesRow.querySelectorAll('.node-column.patched-node').length;
         if (patchedCount >= 4) initUpdateManagerScenario();
@@ -1760,6 +1928,7 @@ function renderScenarioControlBar() {
     btn.addEventListener('click', () => {
       const action = btn.getAttribute('data-c1-wan');
       cableCut = (action === 'cut');
+      trackScenarioStep(cableCut ? 'Sever WAN Link' : 'Restore WAN Link');
       body.classList.toggle('cable-cut', cableCut);
       arcBridgeText.textContent = cableCut ? 'Offline Survival (Up to 30 Days)' : 'Connected via Azure Arc';
       renderScenarioControlBar();
@@ -1836,6 +2005,12 @@ function renderScenarioControlBar() {
       datacenterBox.classList.remove('site-outage');
       evacuatedRecords = [];
       rackNodesPerZone = Number(chip.getAttribute('data-ra-count'));
+      trackVisualizerEvent('topology_config_changed', {
+        setting: 'rack_zone_nodes',
+        settingLabel: 'Rack-Aware Zone Sizing',
+        value: `${rackNodesPerZone}+${rackNodesPerZone}`,
+        valueLabel: `${rackNodesPerZone}+${rackNodesPerZone} Nodes (${rackNodesPerZone * 2} Total)`
+      });
       buildRackAwareClusters();
       renderScenarioControlBar();
       setTimeout(resizeCanvas, 150);
@@ -1951,6 +2126,7 @@ function renderScenarioControlBar() {
       btn.addEventListener('click', e => {
         e.stopPropagation();
         c1DrawerOpen = false;
+        pendingScenarioTriggerSource = 'header-dropdown';
         selectScenario(btn.getAttribute('data-opt5-scn'));
       });
     });
@@ -1994,6 +2170,7 @@ function renderScenarioControlBar() {
         playAllOrig.click();
       });
       document.getElementById('opt5ClearProxy')?.addEventListener('click', () => {
+        pendingScenarioTriggerSource = 'clear';
         selectScenario('default');
       });
       skywayScenarioStepBar.querySelectorAll('[data-opt5-step]').forEach(el => {
@@ -2018,6 +2195,12 @@ function renderScenarioControlBar() {
           datacenterBox.classList.remove('site-outage');
           evacuatedRecords = [];
           rackNodesPerZone = Number(chip.getAttribute('data-ra-count'));
+          trackVisualizerEvent('topology_config_changed', {
+            setting: 'rack_zone_nodes',
+            settingLabel: 'Rack-Aware Zone Sizing',
+            value: `${rackNodesPerZone}+${rackNodesPerZone}`,
+            valueLabel: `${rackNodesPerZone}+${rackNodesPerZone} Nodes (${rackNodesPerZone * 2} Total)`
+          });
           buildRackAwareClusters();
           renderScenarioControlBar();
           setTimeout(resizeCanvas, 150);
@@ -2059,6 +2242,7 @@ function toggleSingleNodeFailure(col) {
     col.classList.add('offline');
     box?.classList.add('offline-lane');
     pwrText.textContent = 'FAILED';
+    trackScenarioStep(`Crash ${nodeLabel} (Local HA Restart)`);
 
     const remainingOnlineCols = Array.from(primaryNodesRow.querySelectorAll('.node-column:not(.offline)'));
     const survivingWorkers = remainingOnlineCols.flatMap(c =>
@@ -2109,6 +2293,7 @@ function toggleSingleNodeFailure(col) {
     col.classList.remove('offline');
     box?.classList.remove('offline-lane');
     pwrText.textContent = 'ONLINE';
+    trackScenarioStep(`Restore ${nodeLabel} Online`);
 
     const homePills = Array.from(primaryWorkloadsRow.querySelectorAll('.vm-pill'))
       .filter(pill => pill._haHomeSlot === box && pill.parentElement !== box);
@@ -2221,6 +2406,7 @@ function resetTwoSiteDrWalkthrough() {
 function triggerAsrFailoverToggle() {
   if (!site1Offline) {
     site1Offline = true;
+    trackScenarioStep('Failover VMs to Azure Cloud (ASR)');
     evacuatedRecords = [];
     Array.from(primaryWorkloadsRow.querySelectorAll('.vm-pill[data-replicable="true"]')).forEach(pill => {
       evacuatedRecords.push({ pill, homeBox: pill.parentElement });
@@ -2242,6 +2428,7 @@ function triggerAsrFailoverToggle() {
     );
   } else {
     site1Offline = false;
+    trackScenarioStep('Failback VMs to Site 1 (ASR)');
     setPrimarySiteDownVisual(false);
     evacuatedRecords.forEach((rec, idx) => {
       setTimeout(() => {
@@ -2265,6 +2452,9 @@ function triggerAsrFailoverToggle() {
 function triggerHvReplicaFailoverToggle() {
   if (scenario !== 'hvreplica' || twoSiteDrBusy) return;
   const isAsr = isTwoSiteAsrActive();
+  trackScenarioStep(!site1Offline
+    ? (isAsr ? 'Failover to Site B (ASR Preview)' : 'Failover to Site B (Hyper-V Replica)')
+    : (isAsr ? 'Failback to Site 1 (ASR Preview)' : 'Failback to Site 1 (Hyper-V Replica)'));
   if (!site1Offline) {
     if (!hvReplicationOn) {
       hvReplicationOn = true;
@@ -2330,6 +2520,7 @@ function triggerHvReplicaFailoverToggle() {
 
 // 4. Rack Aware Cluster Zone 1 Offline -> Automatic Zero RPO HA Restart in Zone 2!
 function triggerRackAwareZoneFailoverToggle() {
+  trackScenarioStep(!site1Offline ? 'Zone 1 Outage (Zero Data Loss Restart)' : 'Restore Zone 1 & Rebalance');
   if (!site1Offline) {
     site1Offline = true;
     evacuatedRecords = [];
@@ -2455,6 +2646,7 @@ function patchSingleClusterNode(nodeIdx, onDoneCallback) {
 
   aumBusy = true;
   aumCurrentNodeIdx = nodeIdx;
+  trackScenarioStep(`Rolling Patch Node 0${nodeIdx + 1} (Live Migrate)`);
   renderScenarioControlBar();
 
   const nodeLabel = `Node ${nodeIdx + 1}`;
@@ -2615,6 +2807,7 @@ function advancePolicySingleButton() {
 
 function runPolicyAuditScan() {
   policyStep = 'audited';
+  trackScenarioStep('Audit Guest OS Baseline');
 
   // Remove any leftover test VM
   primaryWorkloadsRow.querySelectorAll('.vm-pill.policy-test-vm').forEach(el => el.remove());
@@ -2658,6 +2851,7 @@ function runPolicyAuditScan() {
 
 function runPolicyAutoRemediation() {
   policyStep = 'remediated';
+  trackScenarioStep('Auto-Remediate OS Drift');
   renderScenarioControlBar();
 
   const policyOrb = (mode === 'disconnected'
@@ -2708,6 +2902,7 @@ function runPolicyAutoRemediation() {
 
 function simulatePolicyBlockedDeploy() {
   policyStep = 'tested';
+  trackScenarioStep('Auto-Harden New VM (DeployIfNotExists)');
   renderScenarioControlBar();
 
   const cols = Array.from(primaryNodesRow.querySelectorAll('.node-column'));
@@ -2933,7 +3128,12 @@ function removeSimulatedWorkload(workload, button) {
   }
 
   const name = workload.dataset.vmName;
-  const isConfidential = workload.dataset.workloadKind === 'confidential-vm';
+  const workloadKind = workload.dataset.workloadKind || 'vm';
+  const isConfidential = workloadKind === 'confidential-vm';
+  trackVisualizerEvent('workload_removed', {
+    workloadKind,
+    workloadName: name || workloadKind
+  });
   focusAfterWorkloadRemoval(button, workload);
   workload.remove();
   evacuatedRecords = evacuatedRecords.filter(record => record.pill !== workload);
@@ -3015,6 +3215,19 @@ function deploySimulatedWorkload(type, replicaCount = 6, onComplete = null) {
   const runId = deploymentRunId;
   const launchScenario = scenario;
   const launchMode = mode;
+
+  if (!onComplete) {
+    const optMeta = DEPLOYMENT_OPTIONS.find(option => option.id === type);
+    const effectiveReplicas = type === 'aks-pods' ? Math.max(1, Math.min(24, Number(replicaCount) || 6)) : 1;
+    trackVisualizerEvent(
+      'workload_deployed',
+      {
+        workloadType: type,
+        workloadLabel: optMeta ? optMeta.title : type
+      },
+      { replicaCount: effectiveReplicas }
+    );
+  }
 
   commandBursts.push({
     sx: from.x,
@@ -3141,6 +3354,16 @@ function advanceConfidentialStep() {
   if (confidentialStep >= 4) {
     selectScenario('confidential-computing');
     return;
+  }
+
+  const cvmStepLabels = [
+    'Deploy Confidential VM (SEV-SNP)',
+    'Verify Hardware Attestation',
+    'Approve Key Vault Key Release',
+    'Deny Untrusted Attestation Claim'
+  ];
+  if (cvmStepLabels[confidentialStep]) {
+    trackScenarioStep(cvmStepLabels[confidentialStep]);
   }
 
   const runId = confidentialRunId;
@@ -3859,6 +4082,9 @@ document.querySelectorAll('[data-tip]').forEach(el => {
   el.addEventListener('click', e => {
     e.stopPropagation();
     const [title, desc, icon] = el.getAttribute('data-tip').split('|');
+    trackVisualizerEvent('component_inspected', {
+      componentTitle: (title || 'Unknown Component').trim()
+    });
     showToast(title, desc, icon);
   });
 });
@@ -3874,6 +4100,24 @@ buildManagementCluster();
 updateCatalogTriggerButton();
 resizeCanvas();
 requestAnimationFrame(animateCanvas);
+
+trackVisualizerEvent(
+  'app_loaded',
+  {
+    referrerHost: (() => {
+      try {
+        return document.referrer ? new URL(document.referrer).hostname : 'direct';
+      } catch (_) {
+        return 'direct';
+      }
+    })(),
+    screenResolution: `${window.screen?.width || 0}x${window.screen?.height || 0}`
+  },
+  {
+    viewportWidth: window.innerWidth || 0,
+    viewportHeight: window.innerHeight || 0
+  }
+);
 
 // Subtle live telemetry fluctuation for Compute & NVMe bars
 setInterval(() => {
